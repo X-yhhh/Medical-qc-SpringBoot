@@ -109,6 +109,3 @@ npm run dev
 *   **模型文件**: 默认使用的模型权重文件位于 `medical-qc-backend/python_model/models/`。若需重新训练，请运行 `train_advanced.py`。
 *   **静态资源**: 上传的影像文件存储在 `medical-qc-backend/uploads/`，并通过 Spring Boot 配置映射访问。
 *   **跨域配置**: 前端请求已通过 Vite 代理 (`vite.config.js`) 转发至后端 8080 端口。
-
-## ⚠️ 版权说明
-本项目为私有项目，保留所有权利。未经授权，禁止复制、分发或用于商业用途。
