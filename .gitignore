@@ -1,0 +1,14 @@
+.venv/
+.trae/
+medical-qc-backend/target/
+medical-qc-backend/uploads/
+medical-qc-backend/python_model/data/head_ct/
+medical-qc-backend/python_model/data/hemorrhage_uploads/
+*.zip
+medical-qc-frontend/node_modules/
+medical-qc-frontend/dist/
+.idea/
+.vscode/
+*.log
+__pycache__/
+*.pyc

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="com.medical.qc.mapper.HemorrhageRecordMapper">
+    
+    <resultMap id="BaseResultMap" type="com.medical.qc.entity.HemorrhageRecord">
+        <id column="id" property="id" />
+        <result column="user_id" property="userId" />
+        <result column="patient_name" property="patientName" />
+        <result column="exam_id" property="examId" />
+        <result column="image_path" property="imagePath" />
+        <result column="prediction" property="prediction" />
+        <result column="confidence_level" property="confidenceLevel" />
+        <result column="hemorrhage_probability" property="hemorrhageProbability" />
+        <result column="no_hemorrhage_probability" property="noHemorrhageProbability" />
+        <result column="analysis_duration" property="analysisDuration" />
+        <result column="created_at" property="createdAt" />
+    </resultMap>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO hemorrhage_records (user_id, patient_name, exam_id, image_path, prediction, confidence_level, hemorrhage_probability, no_hemorrhage_probability, analysis_duration, created_at)
+        VALUES (#{userId}, #{patientName}, #{examId}, #{imagePath}, #{prediction}, #{confidenceLevel}, #{hemorrhageProbability}, #{noHemorrhageProbability}, #{analysisDuration}, NOW())
+    </insert>
+
+    <select id="findByUserId" resultMap="BaseResultMap">
+        SELECT * FROM hemorrhage_records WHERE user_id = #{userId} ORDER BY created_at DESC
+    </select>
+
+</mapper>
