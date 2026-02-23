@@ -51,6 +51,7 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <jvmArguments>--enable-native-access=ALL-UNNAMED -Djava.library.path="./native-lib/v2/bin/x64"</jvmArguments>
                 </configuration>
             </plugin>
             <plugin>
