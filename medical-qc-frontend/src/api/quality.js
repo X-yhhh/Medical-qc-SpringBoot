@@ -130,6 +130,7 @@ export const detectCoronaryCTA = (file) => {
 export const predictHemorrhage = async (file, metadata = {}) => {
   const formData = new FormData()
   formData.append('file', file)
+  // Ensure keys match backend @RequestParam exactly
   if (metadata.patientName) formData.append('patient_name', metadata.patientName)
   if (metadata.examId) formData.append('exam_id', metadata.examId)
 

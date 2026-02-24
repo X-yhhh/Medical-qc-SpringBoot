@@ -27,7 +27,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/api/v1/auth/login",
                         "/api/v1/auth/register",
-                        "/api/v1/auth/current" // Allow checking status
+                        "/api/v1/auth/current", // Allow checking status
+                        "/uploads/**" // Allow static resources
                 );
     }
 
@@ -35,10 +36,12 @@ public class WebMvcConfig implements WebMvcConfigurer {
     class LoginInterceptor implements HandlerInterceptor {
         @Override
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+            // Allow preflight requests
             if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
                 return true;
             }
 
+            // Log session info for debugging
             HttpSession session = request.getSession(false);
             if (session != null && session.getAttribute("user") != null) {
                 return true;

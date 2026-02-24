@@ -102,8 +102,8 @@
                 <el-icon><TrendCharts /></el-icon> 质控合格率趋势
               </span>
               <el-radio-group v-model="chartPeriod" size="small">
-                <el-radio-button label="week">本周</el-radio-button>
-                <el-radio-button label="month">本月</el-radio-button>
+                <el-radio-button value="week">本周</el-radio-button>
+                <el-radio-button value="month">本月</el-radio-button>
               </el-radio-group>
             </div>
           </template>
