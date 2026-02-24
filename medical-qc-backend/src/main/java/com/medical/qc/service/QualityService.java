@@ -10,7 +10,7 @@ import java.util.Map;
 
 public interface QualityService {
     List<HemorrhageRecord> getHistory(Long userId);
-    Map<String, Object> processHemorrhage(MultipartFile file, User user) throws IOException;
+    Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId) throws IOException;
     
     // Mock methods for other items
     Map<String, Object> detectHead(MultipartFile file);

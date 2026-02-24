@@ -25,6 +25,8 @@ public class AuthController {
     public ResponseEntity<?> login(@RequestBody LoginReq req, HttpSession session) {
         User user = authService.login(req.getUsername(), req.getPassword());
         if (user != null) {
+            user.setPasswordHash(null);
+            user.setAccessToken(null);
             // Store user in session
             session.setAttribute("user", user);
             

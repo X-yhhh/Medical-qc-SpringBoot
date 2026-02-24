@@ -48,12 +48,14 @@ public class QualityServiceImpl implements QualityService {
      *
      * @param file 上传的影像文件
      * @param user 当前登录用户
+     * @param patientName 患者姓名
+     * @param examId 检查 ID
      * @return 模型分析结果（包含 prediction、概率、耗时、影像回显信息等）
      * @throws IOException 文件保存或读取失败时抛出
      * @throws RuntimeException 模型服务返回错误或解析失败时抛出
      */
     @Override
-    public Map<String, Object> processHemorrhage(MultipartFile file, User user) throws IOException {
+    public Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId) throws IOException {
         if (Files.notExists(rootLocation)) {
             Files.createDirectories(rootLocation);
         }
@@ -72,7 +74,10 @@ public class QualityServiceImpl implements QualityService {
         // Save to DB
         HemorrhageRecord record = new HemorrhageRecord();
         record.setUserId(user.getId());
+        record.setPatientName(patientName);
+        record.setExamId(examId);
         record.setImagePath("uploads/" + filename);
+        record.setRawResultJson(new ObjectMapper().writeValueAsString(predictionResult));
 
         // Translate Prediction to Chinese (Front-end expectation)
         String rawPrediction = (String) predictionResult.get("prediction");
@@ -97,10 +102,23 @@ public class QualityServiceImpl implements QualityService {
             record.setAnalysisDuration(((Number) predictionResult.get("analysis_duration")).floatValue());
         }
 
-        // Pass through new metrics
-        if (predictionResult.containsKey("midline_detail")) {
-            // Can be saved to DB if schema supports it, for now just returning to frontend
-            // record.setMidlineDetail(...)
+        if (predictionResult.get("midline_shift") instanceof Boolean) {
+            record.setMidlineShift((Boolean) predictionResult.get("midline_shift"));
+        }
+        if (predictionResult.get("shift_score") instanceof Number) {
+            record.setShiftScore(((Number) predictionResult.get("shift_score")).floatValue());
+        }
+        if (predictionResult.get("midline_detail") != null) {
+            record.setMidlineDetail(String.valueOf(predictionResult.get("midline_detail")));
+        }
+        if (predictionResult.get("ventricle_issue") instanceof Boolean) {
+            record.setVentricleIssue((Boolean) predictionResult.get("ventricle_issue"));
+        }
+        if (predictionResult.get("ventricle_detail") != null) {
+            record.setVentricleDetail(String.valueOf(predictionResult.get("ventricle_detail")));
+        }
+        if (predictionResult.get("device") != null) {
+            record.setDevice(String.valueOf(predictionResult.get("device")));
         }
 
         // Append image meta and URL for frontend rendering

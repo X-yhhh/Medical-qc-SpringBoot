@@ -14,11 +14,19 @@
         <result column="no_hemorrhage_probability" property="noHemorrhageProbability" />
         <result column="analysis_duration" property="analysisDuration" />
         <result column="created_at" property="createdAt" />
+        <result column="midline_shift" property="midlineShift" />
+        <result column="shift_score" property="shiftScore" />
+        <result column="midline_detail" property="midlineDetail" />
+        <result column="ventricle_issue" property="ventricleIssue" />
+        <result column="ventricle_detail" property="ventricleDetail" />
+        <result column="device" property="device" />
+        <result column="raw_result_json" property="rawResultJson" />
+        <result column="updated_at" property="updatedAt" />
     </resultMap>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO hemorrhage_records (user_id, patient_name, exam_id, image_path, prediction, confidence_level, hemorrhage_probability, no_hemorrhage_probability, analysis_duration, created_at)
-        VALUES (#{userId}, #{patientName}, #{examId}, #{imagePath}, #{prediction}, #{confidenceLevel}, #{hemorrhageProbability}, #{noHemorrhageProbability}, #{analysisDuration}, NOW())
+        INSERT INTO hemorrhage_records (user_id, patient_name, exam_id, image_path, prediction, confidence_level, hemorrhage_probability, no_hemorrhage_probability, analysis_duration, created_at, midline_shift, shift_score, midline_detail, ventricle_issue, ventricle_detail, device, raw_result_json)
+        VALUES (#{userId}, #{patientName}, #{examId}, #{imagePath}, #{prediction}, #{confidenceLevel}, #{hemorrhageProbability}, #{noHemorrhageProbability}, #{analysisDuration}, NOW(), #{midlineShift}, #{shiftScore}, #{midlineDetail}, #{ventricleIssue}, #{ventricleDetail}, #{device}, #{rawResultJson})
     </insert>
 
     <select id="findByUserId" resultMap="BaseResultMap">
