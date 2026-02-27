@@ -46,16 +46,17 @@ public class QualityServiceImpl implements QualityService {
     /**
      * 处理脑出血检测上传与模型分析流程。
      *
-     * @param file 上传的影像文件
-     * @param user 当前登录用户
+     * @param file        上传的影像文件
+     * @param user        当前登录用户
      * @param patientName 患者姓名
-     * @param examId 检查 ID
+     * @param examId      检查 ID
      * @return 模型分析结果（包含 prediction、概率、耗时、影像回显信息等）
-     * @throws IOException 文件保存或读取失败时抛出
+     * @throws IOException      文件保存或读取失败时抛出
      * @throws RuntimeException 模型服务返回错误或解析失败时抛出
      */
     @Override
-    public Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId) throws IOException {
+    public Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId)
+            throws IOException {
         if (Files.notExists(rootLocation)) {
             Files.createDirectories(rootLocation);
         }
@@ -89,15 +90,16 @@ public class QualityServiceImpl implements QualityService {
         if (predictionResult.get("confidence_level") != null) {
             record.setConfidenceLevel(String.valueOf(predictionResult.get("confidence_level")));
         }
-        
+
         if (predictionResult.get("hemorrhage_probability") instanceof Number) {
             record.setHemorrhageProbability(((Number) predictionResult.get("hemorrhage_probability")).floatValue());
         }
-        
+
         if (predictionResult.get("no_hemorrhage_probability") instanceof Number) {
-            record.setNoHemorrhageProbability(((Number) predictionResult.get("no_hemorrhage_probability")).floatValue());
+            record.setNoHemorrhageProbability(
+                    ((Number) predictionResult.get("no_hemorrhage_probability")).floatValue());
         }
-        
+
         if (predictionResult.get("analysis_duration") instanceof Number) {
             record.setAnalysisDuration(((Number) predictionResult.get("analysis_duration")).floatValue());
         }
@@ -149,57 +151,86 @@ public class QualityServiceImpl implements QualityService {
      * @return Python 服务返回的 JSON 结果映射；若发生异常则返回包含 error 字段的映射
      */
     private Map<String, Object> callPythonModelViaWebSocket(String imagePath) {
-        CompletableFuture<String> future = new CompletableFuture<>();
-        WebSocketClient client = null;
+        URI serverUri;
         try {
-            client = new WebSocketClient(new URI(modelServerUrl)) {
-                @Override
-                public void onOpen(ServerHandshake handshakedata) {
-                    Map<String, String> req = new HashMap<>();
-                    req.put("image_path", imagePath);
-                    try {
-                        send(new ObjectMapper().writeValueAsString(req));
-                    } catch (Exception e) {
-                        future.completeExceptionally(e);
-                    }
-                }
-
-                @Override
-                public void onMessage(String message) {
-                    future.complete(message);
-                    close();
-                }
-
-                @Override
-                public void onClose(int code, String reason, boolean remote) {
-                    if (!future.isDone()) {
-                        future.completeExceptionally(new RuntimeException("Connection closed: " + reason));
-                    }
-                }
-
-                @Override
-                public void onError(Exception ex) {
-                    future.completeExceptionally(ex);
-                }
-            };
-            if (!client.connectBlocking(5, TimeUnit.SECONDS)) {
-                return Collections.singletonMap("error", "Failed to connect to Python Model Server (Port 8765)");
-            }
-            String resultJson = future.get(60, TimeUnit.SECONDS); // Increased timeout for initial CUDA load
-            return new ObjectMapper().readValue(resultJson, Map.class);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return Collections.singletonMap("error", "Connection interrupted");
-        } catch (java.util.concurrent.TimeoutException e) {
-            return Collections.singletonMap("error", "Analysis timed out (Check if Python server is running)");
+            serverUri = new URI(modelServerUrl);
         } catch (Exception e) {
-            e.printStackTrace();
-            return Collections.singletonMap("error", e.getMessage());
-        } finally {
-            if (client != null) {
-                client.close();
+            return Collections.singletonMap("error", "Invalid python.model_server.url");
+        }
+
+        int port = serverUri.getPort();
+        if (port <= 0) {
+            port = "wss".equalsIgnoreCase(serverUri.getScheme()) ? 443 : 80;
+        }
+
+        int connectAttempts = 6;
+        long connectBackoffMs = 1000;
+
+        for (int attempt = 1; attempt <= connectAttempts; attempt++) {
+            CompletableFuture<String> future = new CompletableFuture<>();
+            WebSocketClient client = null;
+            try {
+                client = new WebSocketClient(serverUri) {
+                    @Override
+                    public void onOpen(ServerHandshake handshakedata) {
+                        Map<String, String> req = new HashMap<>();
+                        req.put("image_path", imagePath);
+                        try {
+                            send(new ObjectMapper().writeValueAsString(req));
+                        } catch (Exception e) {
+                            future.completeExceptionally(e);
+                        }
+                    }
+
+                    @Override
+                    public void onMessage(String message) {
+                        future.complete(message);
+                        close();
+                    }
+
+                    @Override
+                    public void onClose(int code, String reason, boolean remote) {
+                        if (!future.isDone()) {
+                            future.completeExceptionally(new RuntimeException("Connection closed: " + reason));
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception ex) {
+                        future.completeExceptionally(ex);
+                    }
+                };
+
+                if (!client.connectBlocking(5, TimeUnit.SECONDS)) {
+                    if (attempt == connectAttempts) {
+                        return Collections.singletonMap("error",
+                                "Failed to connect to Python Model Server (Port " + port + ")");
+                    }
+                    Thread.sleep(connectBackoffMs);
+                    continue;
+                }
+
+                String resultJson = future.get(60, TimeUnit.SECONDS); // Increased timeout for initial CUDA load
+                return new ObjectMapper().readValue(resultJson, Map.class);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Collections.singletonMap("error", "Connection interrupted");
+            } catch (java.util.concurrent.TimeoutException e) {
+                return Collections.singletonMap("error", "Analysis timed out (Check if Python server is running)");
+            } catch (Exception e) {
+                e.printStackTrace();
+                return Collections.singletonMap("error", e.getMessage());
+            } finally {
+                if (client != null) {
+                    try {
+                        client.close();
+                    } catch (Exception ignore) {
+                    }
+                }
             }
         }
+
+        return Collections.singletonMap("error", "Failed to connect to Python Model Server (Port " + port + ")");
     }
 
     // Mock Implementations matching frontend expectations

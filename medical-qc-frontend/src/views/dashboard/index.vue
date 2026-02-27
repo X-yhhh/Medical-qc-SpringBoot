@@ -16,7 +16,7 @@
     <el-row :gutter="20" class="stats-row">
       <el-col :span="6" v-for="item in statsData" :key="item.title">
         <el-card shadow="hover" class="stats-card">
-          <div class="stats-icon" :class="item.type" style="margin-left: 10px;">
+          <div class="stats-icon" :class="item.type" style="margin-left: 10px">
             <el-icon><component :is="item.icon" /></el-icon>
           </div>
           <div class="stats-info">
@@ -171,7 +171,7 @@
  * @file dashboard/index.vue
  * @description 首页仪表盘
  * 展示核心质控数据指标、快捷功能入口、风险预警及待办事项。
- * 
+ *
  * 对接API说明:
  * - 本页面目前主要使用静态模拟数据进行展示
  * - statsData: 对应后端 /api/dashboard/stats 接口 (待开发)
@@ -265,6 +265,16 @@ const activities = [
   { content: '审核早班急诊报告', timestamp: '08:00', type: 'primary', color: '#409EFF' },
   { content: '参加科室质控周会', timestamp: '14:00', type: 'warning', color: '#E6A23C' },
   { content: '整理月度质控报表', timestamp: '17:00', type: 'info', color: '#909399' },
+]
+
+/**
+ * 最近访问记录 (模拟)
+ * 展示用户最近使用的功能或查看的病例
+ */
+const recentVisits = [
+  { id: 1, name: '张三 (CT00123)', type: 'danger', tag: '出血', time: '10分钟前' },
+  { id: 2, name: '李四 (CT00124)', type: 'primary', tag: '平扫', time: '35分钟前' },
+  { id: 3, name: '王五 (CT00125)', type: 'success', tag: '正常', time: '1小时前' },
 ]
 </script>
 
