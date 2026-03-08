@@ -1,6 +1,7 @@
 package com.medical.qc.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.medical.qc.common.AuthRole;
 import com.medical.qc.entity.User;
 import com.medical.qc.mapper.UserMapper;
 import com.medical.qc.service.AuthService;
@@ -18,16 +19,35 @@ public class AuthServiceImpl implements AuthService {
     private UserMapper userMapper;
 
     @Override
-    public User login(String username, String password) {
+    public User login(String username, String password, String role) {
+        AuthRole authRole = AuthRole.fromCode(role);
+        String usernameOrEmail = trimToNull(username);
+        String rawPassword = password;
+
+        if (authRole == null || usernameOrEmail == null || rawPassword == null || rawPassword.isBlank()) {
+            return null;
+        }
+
         QueryWrapper<User> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("username", username);
+        queryWrapper.eq("role_id", authRole.getId())
+                .and(wrapper -> wrapper.eq("username", usernameOrEmail)
+                .or()
+                .eq("email", usernameOrEmail));
         User user = userMapper.selectOne(queryWrapper);
-        
+
         if (user == null) {
             return null;
         }
 
-        if (!verifyPassword(password, user.getPasswordHash())) {
+        if (Boolean.FALSE.equals(user.getIsActive())) {
+            return null;
+        }
+
+        if (!authRole.matchesRoleId(user.getRoleId())) {
+            return null;
+        }
+
+        if (!verifyPassword(rawPassword, user.getPasswordHash())) {
             return null;
         }
 
@@ -36,28 +56,56 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public String register(String username, String email, String password, String fullName, String hospital,
-            String department) {
-        
+            String department, String role) {
+        AuthRole authRole = AuthRole.fromCode(role);
+        String normalizedUsername = trimToNull(username);
+        String normalizedEmail = trimToNull(email);
+        String normalizedPassword = password;
+        String normalizedFullName = trimToNull(fullName);
+        String normalizedHospital = trimToNull(hospital);
+        String normalizedDepartment = trimToNull(department);
+
+        if (authRole == null) {
+            return "请选择正确的身份";
+        }
+
+        if (normalizedUsername == null || normalizedEmail == null || normalizedPassword == null || normalizedPassword.isBlank()) {
+            return "请完整填写用户名、邮箱和密码";
+        }
+
+        if (normalizedFullName == null) {
+            return "请输入真实姓名";
+        }
+
+        if (normalizedHospital == null) {
+            return "请输入医院名称";
+        }
+
+        if (AuthRole.DOCTOR == authRole && normalizedDepartment == null) {
+            return "医生身份需要填写科室";
+        }
+
         QueryWrapper<User> usernameWrapper = new QueryWrapper<>();
-        usernameWrapper.eq("username", username);
+        usernameWrapper.eq("username", normalizedUsername)
+                .eq("role_id", authRole.getId());
         if (userMapper.selectOne(usernameWrapper) != null) {
-            return "Username '" + username + "' already exists";
+            return "当前身份下用户名已存在";
         }
 
         QueryWrapper<User> emailWrapper = new QueryWrapper<>();
-        emailWrapper.eq("email", email);
+        emailWrapper.eq("email", normalizedEmail);
         if (userMapper.selectOne(emailWrapper) != null) {
-            return "Email '" + email + "' already exists";
+            return "邮箱已存在";
         }
 
         User user = new User();
-        user.setUsername(username);
-        user.setEmail(email);
-        user.setPasswordHash(hashPassword(password));
-        user.setFullName(fullName);
-        user.setHospital(hospital);
-        user.setDepartment(department);
-        user.setRoleId(2); // Doctor
+        user.setUsername(normalizedUsername);
+        user.setEmail(normalizedEmail);
+        user.setPasswordHash(hashPassword(normalizedPassword));
+        user.setFullName(normalizedFullName);
+        user.setHospital(normalizedHospital);
+        user.setDepartment(normalizedDepartment);
+        user.setRoleId(authRole.getId());
         user.setIsActive(true);
 
         userMapper.insert(user);
@@ -75,7 +123,20 @@ public class AuthServiceImpl implements AuthService {
     }
 
     private boolean verifyPassword(String raw, String hashed) {
+        if (raw == null || hashed == null) {
+            return false;
+        }
+
         return hashPassword(raw).equals(hashed);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     private static String bytesToHex(byte[] hash) {

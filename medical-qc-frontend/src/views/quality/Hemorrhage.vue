@@ -83,12 +83,12 @@
                     <el-icon><FolderOpened /></el-icon>
                   </div>
                   <h3>本地影像上传</h3>
-                  <p>支持 DICOM 文件夹拖拽上传</p>
-                  <p class="sub-tip">自动解析 .dcm 序列文件</p>
+                  <p>支持 PNG / JPG / BMP 影像上传</p>
+                  <p class="sub-tip">当前模型暂不支持 .dcm 序列解析</p>
                 </div>
               </el-col>
 
-              <!-- PACS 入口卡片：触发模拟 PACS 检索 -->
+              <!-- PACS 入口卡片：当前环境未接入真实 PACS，提示改用本地上传 -->
               <el-col :span="10">
                 <div class="choice-card pacs-select" @click="simulatePacsSelect">
                   <div class="icon-wrapper">
@@ -133,13 +133,13 @@
             <el-descriptions :column="3" border>
               <el-descriptions-item label="姓名">{{ patientInfo.name }}</el-descriptions-item>
               <el-descriptions-item label="性别">{{ patientInfo.gender }}</el-descriptions-item>
-              <el-descriptions-item label="年龄">{{ patientInfo.age }}岁</el-descriptions-item>
+              <el-descriptions-item label="年龄">{{ formatAge(patientInfo.age) }}</el-descriptions-item>
               <el-descriptions-item label="检查ID">{{ patientInfo.studyId }}</el-descriptions-item>
               <el-descriptions-item label="检查日期">{{ patientInfo.studyDate }}</el-descriptions-item>
               <el-descriptions-item label="设备型号">{{ patientInfo.device }}</el-descriptions-item>
               <el-descriptions-item label="扫描部位">Head Routine</el-descriptions-item>
               <el-descriptions-item label="检测模型">
-                 <el-tag size="small" effect="plain">{{ modelName || 'ResNet50' }}</el-tag>
+                 <el-tag size="small" effect="plain">{{ modelName || '--' }}</el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="推理设备">
                 <span style="color: #409EFF; font-weight: bold;">{{ inferenceDevice }}</span>
@@ -169,9 +169,15 @@
                      {{ hasHemorrhage ? '疑似出血' : '未见异常' }}
                    </el-tag>
                  </div>
+                 <div class="summary-primary-issue">
+                   主要异常：
+                   <span :class="['primary-issue-text', hasHemorrhage ? 'is-danger' : 'is-normal']">
+                     {{ primaryIssue }}
+                   </span>
+                 </div>
                </div>
-            </div>
-          </el-card>
+             </div>
+           </el-card>
         </el-col>
       </el-row>
 
@@ -262,14 +268,14 @@
             :show-file-list="true"
             :limit="1"
             :on-change="handleDialogFileChange"
-            :on-remove="() => (selectedFile = null)"
+            :on-remove="handleDialogFileRemove"
             style="width: 100%"
-            accept=".png,.jpg,.jpeg,.bmp,.dcm"
+            accept=".png,.jpg,.jpeg,.bmp"
           >
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
             <div class="el-upload__text">拖拽影像文件或 <em>点击上传</em></div>
             <template #tip>
-              <div class="el-upload__tip">支持 PNG, JPG, DICOM 格式</div>
+              <div class="el-upload__tip">支持 PNG、JPG、JPEG、BMP 格式</div>
             </template>
           </el-upload>
         </el-form-item>
@@ -356,39 +362,45 @@
 
   @backend-api 对接接口:
   - [POST] /api/v1/quality/hemorrhage (真实: predictHemorrhage) - 脑出血检测
-  - [GET] /api/v1/quality/hemorrhage/history (计划中) - 获取历史记录
+  - [GET] /api/v1/quality/hemorrhage/history (真实) - 获取历史记录
 -->
 <script setup>
 /**
  * @component Hemorrhage
  * @description 头部出血检测页面逻辑控制器
  */
-import { ref, computed, reactive, nextTick } from 'vue'
+import { ref, computed, reactive, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight, ArrowLeft } from '@element-plus/icons-vue'
-import { predictHemorrhage } from '@/api/quality'
-import '@/assets/css/hemorrhage-scan.css' // 引入专用的扫描动画样式
+import { User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { predictHemorrhage, getHemorrhageHistory, getHemorrhageRecord } from '@/api/quality'
+import '@/assets/css/hemorrhage-scan.css'
+
+const route = useRoute()
+const router = useRouter()
 
 // --- 状态定义 ---
-const analyzing = ref(false)         // 是否正在分析中
-const analyzeProgress = ref(0)       // 分析进度 (0-100)
-const uploadDialogVisible = ref(false) // 上传弹窗可见性
-const uploadMode = ref('local')      // 上传模式: 'local' | 'pacs'
-const uploadFormRef = ref(null)      // 表单引用
-const selectedFile = ref(null)       // 选中的本地文件
-const dialogVisible = ref(false)     // 详情弹窗可见性
-const currentItem = ref(null)        // 当前查看的详情项
+const analyzing = ref(false)
+const analyzeProgress = ref(0)
+const uploadDialogVisible = ref(false)
+const uploadMode = ref('local')
+const uploadFormRef = ref(null)
+const selectedFile = ref(null)
+const dialogVisible = ref(false)
+const currentItem = ref(null)
 
 // --- 结果数据 ---
-const qcItems = ref([])              // 质控检测结果列表
-const hasHemorrhage = ref(false)     // 是否检测到出血
-const hemorrhageProb = ref(0)        // 出血概率 (0-100)
-const inferenceDevice = ref('CPU')   // 推理设备 (CPU/GPU)
-const modelName = ref('')            // 使用的模型名称
-const imageUrl = ref('')             // 预览图片 URL (Base64)
-const bboxes = ref([])               // 出血区域边界框 [x, y, w, h]
-const confidenceLevel = ref('')      // 置信度描述
-const imageMeta = ref({ width: 0, height: 0 }) // 图片原始尺寸，用于计算 BBox 相对位置
+const qcItems = ref([])
+const hasHemorrhage = ref(false)
+const hemorrhageProb = ref(0)
+const primaryIssue = ref('未见明显异常')
+const inferenceDevice = ref('--')
+const modelName = ref('')
+const imageUrl = ref('')
+const bboxes = ref([])
+const confidenceLevel = ref('--')
+const imageMeta = ref({ width: 0, height: 0 })
+const recordCreatedAt = ref('')
 
 // --- 日志与进度 ---
 const currentAnalysisStep = ref('准备就绪')
@@ -405,45 +417,479 @@ const uploadRules = {
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
 }
 
-// --- 患者信息 (展示用) ---
-const patientInfo = ref({
-  name: '',
-  gender: '',
-  age: 0,
-  studyId: '',
-  accessionNumber: '',
-  studyDate: '',
-  device: '',
+/**
+ * 构造患者信息默认值，避免页面在缺少字段时出现写死数据。
+ *
+ * @returns {Object} 患者信息默认对象
+ */
+const createDefaultPatientInfo = () => ({
+  name: '--',
+  gender: '--',
+  age: null,
+  studyId: '--',
+  accessionNumber: '--',
+  studyDate: '--',
+  device: '--',
 })
 
-// --- 计算属性 ---
+// --- 患者信息（展示用） ---
+const patientInfo = ref(createDefaultPatientInfo())
 
-/**
- * 根据出血概率计算评分颜色
- * > 0: 红色 (检测到出血)
- * > 50%: 橙色 (高风险)
- * 其他: 绿色 (正常)
- */
+// --- 计算属性 ---
 const scoreColor = computed(() => {
   if (hasHemorrhage.value) return '#F56C6C'
   if (hemorrhageProb.value > 50) return '#E6A23C'
   return '#67C23A'
 })
 
+// --- 通用辅助方法 ---
+
+/**
+ * 判断字符串是否有实际内容。
+ *
+ * @param {unknown} value - 待判断值
+ * @returns {boolean} 是否为非空字符串
+ */
+const hasText = (value) => typeof value === 'string' && value.trim().length > 0
+
+/**
+ * 从多个候选值中提取第一个非空文本。
+ *
+ * @param {...unknown} candidates - 候选值列表
+ * @returns {string} 清洗后的文本
+ */
+const resolveText = (...candidates) => {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim()
+    }
+
+    if (candidate !== null && candidate !== undefined && candidate !== '' && typeof candidate !== 'object') {
+      return String(candidate)
+    }
+  }
+
+  return ''
+}
+
+/**
+ * 从多个候选值中提取第一个合法数字。
+ *
+ * @param {...unknown} candidates - 候选值列表
+ * @returns {number} 数值结果
+ */
+const resolveNumber = (...candidates) => {
+  for (const candidate of candidates) {
+    const parsedValue = Number(candidate)
+    if (Number.isFinite(parsedValue)) {
+      return parsedValue
+    }
+  }
+
+  return 0
+}
+
+/**
+ * 从多个候选值中提取可选数字；若不存在则返回 null。
+ *
+ * @param {...unknown} candidates - 候选值列表
+ * @returns {number|null} 数值结果
+ */
+const resolveOptionalNumber = (...candidates) => {
+  for (const candidate of candidates) {
+    const parsedValue = Number(candidate)
+    if (Number.isFinite(parsedValue)) {
+      return parsedValue
+    }
+  }
+
+  return null
+}
+
+/**
+ * 兼容后端布尔字段的不同表现形式。
+ *
+ * @param {unknown} value - 原始值
+ * @returns {boolean} 布尔结果
+ */
+const toBoolean = (value) => {
+  if (typeof value === 'boolean') return value
+  if (value === 1 || value === '1' || value === 'true') return true
+  if (value === 0 || value === '0' || value === 'false') return false
+  return Boolean(value)
+}
+
+/**
+ * 将时间值格式化为页面展示字符串。
+ *
+ * @param {string|Date} value - 时间值
+ * @returns {string} 格式化时间
+ */
+const formatDateTime = (value) => {
+  if (!value) return ''
+
+  const parsedDate = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(parsedDate.getTime())) {
+    return ''
+  }
+
+  const pad = (number) => String(number).padStart(2, '0')
+  const year = parsedDate.getFullYear()
+  const month = pad(parsedDate.getMonth() + 1)
+  const day = pad(parsedDate.getDate())
+  const hour = pad(parsedDate.getHours())
+  const minute = pad(parsedDate.getMinutes())
+  const second = pad(parsedDate.getSeconds())
+
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`
+}
+
+/**
+ * 将检查时间格式化为“检查日期”字段。
+ *
+ * @param {string|Date} value - 检查时间
+ * @returns {string} 日期文本
+ */
+const formatStudyDate = (value) => {
+  const dateTimeText = formatDateTime(value)
+  return dateTimeText ? dateTimeText.slice(0, 10) : '--'
+}
+
+/**
+ * 格式化年龄展示，避免空值时出现“岁”后缀异常。
+ *
+ * @param {number|string|null} age - 年龄值
+ * @returns {string} 年龄展示文案
+ */
+const formatAge = (age) => {
+  const numericAge = resolveOptionalNumber(age)
+  return numericAge === null ? '--' : `${numericAge}岁`
+}
+
+/**
+ * 解析历史记录中的原始分析结果 JSON。
+ *
+ * @param {string} rawResultJson - 数据库保存的原始结果
+ * @returns {Object} 解析后的结果对象
+ */
+const safeParseRawResult = (rawResultJson) => {
+  if (!hasText(rawResultJson)) {
+    return {}
+  }
+
+  try {
+    return JSON.parse(rawResultJson)
+  } catch (error) {
+    console.warn('解析脑出血历史原始结果失败', error)
+    return {}
+  }
+}
+
+/**
+ * 统一处理后端返回的图片路径。
+ *
+ * @param {string} rawUrl - 原始图片路径
+ * @returns {string} 标准化后的图片路径
+ */
+const normalizeImageUrl = (rawUrl) => {
+  if (!hasText(rawUrl)) {
+    return ''
+  }
+
+  const normalizedUrl = rawUrl.trim().replaceAll('\\', '/')
+  if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('data:')) {
+    return normalizedUrl
+  }
+
+  return normalizedUrl.startsWith('/') ? normalizedUrl : `/${normalizedUrl}`
+}
+
+/**
+ * 兼容后端返回的单个 bbox 或 bbox 数组。
+ *
+ * @param {unknown} rawBboxes - 原始 bbox 数据
+ * @returns {Array<Array<number>>} 标准化后的 bbox 列表
+ */
+const normalizeBboxes = (rawBboxes) => {
+  if (!Array.isArray(rawBboxes)) {
+    return []
+  }
+
+  if (rawBboxes.length === 4 && rawBboxes.every((item) => Number.isFinite(Number(item)))) {
+    return [rawBboxes.map((item) => Number(item))]
+  }
+
+  return rawBboxes
+    .filter((item) => Array.isArray(item) && item.length === 4)
+    .map((item) => item.map((value) => Number(value)))
+}
+
+/**
+ * 清空当前分析结果，回到待上传状态。
+ */
+const clearHemorrhageResult = () => {
+  qcItems.value = []
+  hasHemorrhage.value = false
+  hemorrhageProb.value = 0
+  primaryIssue.value = '未见明显异常'
+  inferenceDevice.value = '--'
+  modelName.value = ''
+  imageUrl.value = ''
+  bboxes.value = []
+  confidenceLevel.value = '--'
+  imageMeta.value = { width: 0, height: 0 }
+  patientInfo.value = createDefaultPatientInfo()
+  recordCreatedAt.value = ''
+  currentItem.value = null
+}
+
+/**
+ * 根据后端分析结果生成主要异常文案。
+ * 与首页、异常汇总页保持同一严重度优先级。
+ *
+ * @param {Object} result - 后端响应数据或历史记录数据
+ * @returns {string} 主异常项
+ */
+const resolvePrimaryIssue = (result) => {
+  const explicitPrimaryIssue = resolveText(result?.primary_issue, result?.primaryIssue)
+  if (explicitPrimaryIssue) {
+    return explicitPrimaryIssue
+  }
+
+  if (result?.prediction === '出血') {
+    return '脑出血'
+  }
+
+  if (toBoolean(result?.midline_shift ?? result?.midlineShift)) {
+    return resolveText(result?.midline_detail, result?.midlineDetail, '中线偏移')
+  }
+
+  if (toBoolean(result?.ventricle_issue ?? result?.ventricleIssue)) {
+    return resolveText(result?.ventricle_detail, result?.ventricleDetail, '脑室结构异常')
+  }
+
+  return '未见明显异常'
+}
+
+/**
+ * 组装页面展示用的质控明细列表。
+ *
+ * @param {Object} resultPayload - 标准化后的结果载荷
+ * @param {number} probabilityPercent - 出血风险百分比
+ * @returns {Array<Object>} 展示列表
+ */
+const buildQcItems = (resultPayload, probabilityPercent) => [
+  {
+    name: '脑出血检测',
+    type: 'hemorrhage',
+    description: '检测是否存在脑实质内高密度出血灶',
+    status: resultPayload.prediction === '出血' ? '异常' : '正常',
+    detail: resultPayload.prediction === '出血'
+      ? `检测到疑似出血区域 (置信度: ${probabilityPercent.toFixed(1)}%)`
+      : '未检测到明显出血灶',
+  },
+  {
+    name: '中线偏移',
+    type: 'midline',
+    description: '检测脑中线结构是否发生位移',
+    status: resultPayload.midline_shift ? '异常' : '正常',
+    detail: resultPayload.midline_detail || (resultPayload.midline_shift ? '检测到中线偏移' : '中线结构居中'),
+  },
+  {
+    name: '脑室结构',
+    type: 'ventricle',
+    description: '检测脑室系统形态及密度是否正常',
+    status: resultPayload.ventricle_issue ? '异常' : '正常',
+    detail: resultPayload.ventricle_detail || (resultPayload.ventricle_issue ? '脑室形态异常' : '脑室系统形态正常'),
+  },
+]
+
+/**
+ * 将后端实时响应或数据库历史记录统一标准化为页面可消费的数据结构。
+ *
+ * @param {Object} source - 原始数据源
+ * @returns {Object} 标准化结果
+ */
+const normalizeHemorrhagePayload = (source = {}) => {
+  const rawResult = source?.rawResultJson ? safeParseRawResult(source.rawResultJson) : source
+  const prediction = resolveText(source?.prediction, rawResult?.prediction)
+  const midlineShift = typeof source?.midlineShift === 'boolean'
+    ? source.midlineShift
+    : toBoolean(rawResult?.midline_shift)
+  const ventricleIssue = typeof source?.ventricleIssue === 'boolean'
+    ? source.ventricleIssue
+    : toBoolean(rawResult?.ventricle_issue)
+
+  const normalizedPayload = {
+    prediction,
+    qc_status: resolveText(source?.qcStatus, rawResult?.qc_status),
+    confidence_level: resolveText(source?.confidenceLevel, rawResult?.confidence_level, rawResult?.confidence, '--'),
+    hemorrhage_probability: resolveNumber(
+      source?.hemorrhageProbability,
+      rawResult?.hemorrhage_probability,
+      rawResult?.probability?.hemorrhage,
+    ),
+    no_hemorrhage_probability: resolveNumber(
+      source?.noHemorrhageProbability,
+      rawResult?.no_hemorrhage_probability,
+      rawResult?.probability?.no_hemorrhage,
+    ),
+    analysis_duration: resolveNumber(source?.analysisDuration, rawResult?.analysis_duration, rawResult?.duration),
+    midline_shift: midlineShift,
+    shift_score: resolveNumber(source?.shiftScore, rawResult?.shift_score),
+    midline_detail: resolveText(source?.midlineDetail, rawResult?.midline_detail),
+    ventricle_issue: ventricleIssue,
+    ventricle_detail: resolveText(source?.ventricleDetail, rawResult?.ventricle_detail),
+    device: resolveText(source?.device, rawResult?.device, '--') || '--',
+    model_name: resolveText(rawResult?.model_name),
+    image_url: normalizeImageUrl(resolveText(rawResult?.image_url, source?.imagePath)),
+    image_base64: resolveText(rawResult?.image_base64),
+    image_width: resolveNumber(rawResult?.image_width, rawResult?.imageWidth, 512),
+    image_height: resolveNumber(rawResult?.image_height, rawResult?.imageHeight, 512),
+    bboxes: normalizeBboxes(rawResult?.bboxes ?? rawResult?.bbox),
+    patient_name: resolveText(source?.patientName, rawResult?.patient_name),
+    exam_id: resolveText(source?.examId, rawResult?.exam_id),
+    gender: resolveText(source?.gender, rawResult?.gender),
+    age: resolveOptionalNumber(source?.age, rawResult?.age),
+    accession_number: resolveText(source?.accessionNumber, rawResult?.accession_number, source?.examId, rawResult?.exam_id),
+    created_at: source?.createdAt || rawResult?.created_at,
+    updated_at: source?.updatedAt || rawResult?.updated_at,
+  }
+
+  normalizedPayload.primary_issue = resolvePrimaryIssue({
+    primary_issue: resolveText(source?.primaryIssue, rawResult?.primary_issue),
+    prediction: normalizedPayload.prediction,
+    midline_shift: normalizedPayload.midline_shift,
+    midline_detail: normalizedPayload.midline_detail,
+    ventricle_issue: normalizedPayload.ventricle_issue,
+    ventricle_detail: normalizedPayload.ventricle_detail,
+  })
+
+  return normalizedPayload
+}
+
+/**
+ * 将标准化结果回填到页面状态中。
+ *
+ * @param {Object} resultPayload - 标准化后的结果数据
+ */
+const applyHemorrhageResult = (resultPayload) => {
+  if (!resultPayload) {
+    clearHemorrhageResult()
+    return
+  }
+
+  const probabilityPercent = Number((resolveNumber(resultPayload.hemorrhage_probability) * 100).toFixed(1))
+  const previewUrl = resultPayload.image_base64
+    ? `data:image/png;base64,${resultPayload.image_base64}`
+    : normalizeImageUrl(resultPayload.image_url)
+
+  analyzing.value = false
+  hasHemorrhage.value = resultPayload.prediction === '出血'
+  hemorrhageProb.value = Number.isFinite(probabilityPercent) ? probabilityPercent : 0
+  primaryIssue.value = resolvePrimaryIssue(resultPayload)
+  inferenceDevice.value = resolveText(resultPayload.device, '--') || '--'
+  modelName.value = resolveText(resultPayload.model_name)
+  imageUrl.value = previewUrl
+  bboxes.value = resultPayload.bboxes
+  confidenceLevel.value = resolveText(resultPayload.confidence_level, '--') || '--'
+  imageMeta.value = {
+    width: resolveNumber(resultPayload.image_width, 512),
+    height: resolveNumber(resultPayload.image_height, 512),
+  }
+  patientInfo.value = {
+    name: resolveText(resultPayload.patient_name, '--') || '--',
+    gender: resolveText(resultPayload.gender, '--') || '--',
+    age: resolveOptionalNumber(resultPayload.age),
+    studyId: resolveText(resultPayload.exam_id, '--') || '--',
+    accessionNumber: resolveText(resultPayload.accession_number, resultPayload.exam_id, '--') || '--',
+    studyDate: formatStudyDate(resultPayload.created_at),
+    device: resolveText(resultPayload.device, '--') || '--',
+  }
+  recordCreatedAt.value = formatDateTime(resultPayload.created_at)
+  uploadForm.patientName = patientInfo.value.name === '--' ? '' : patientInfo.value.name
+  uploadForm.examId = patientInfo.value.studyId === '--' ? '' : patientInfo.value.studyId
+  qcItems.value = buildQcItems(resultPayload, hemorrhageProb.value)
+}
+
+/**
+ * 从数据库加载最近一次脑出血检测记录。
+ * 当网络瞬时波动时，允许使用本次分析结果作为兜底，保证页面回显稳定。
+ *
+ * @param {Object|null} fallbackPayload - 可选的兜底结果
+ */
+const loadLatestHemorrhageRecord = async (fallbackPayload = null) => {
+  try {
+    const response = await getHemorrhageHistory(1)
+    const latestRecord = Array.isArray(response?.data) ? response.data[0] : null
+
+    if (latestRecord) {
+      applyHemorrhageResult(normalizeHemorrhagePayload(latestRecord))
+      return
+    }
+  } catch (error) {
+    console.error('加载脑出血历史记录失败', error)
+  }
+
+  if (fallbackPayload) {
+    applyHemorrhageResult(fallbackPayload)
+    return
+  }
+
+  clearHemorrhageResult()
+}
+
 // --- 方法定义 ---
 
 /**
- * 计算 BBox 在预览图中的相对位置样式
- * 将后端返回的绝对坐标转换为百分比，以适应响应式布局
- * @param {Array} box - [x, y, w, h]
+ * 计算 BBox 在预览图中的相对位置样式。
+ * 将后端返回的绝对坐标转换为百分比，以适应响应式布局。
+ *
+ * @param {Array<number>} box - [x, y, w, h]
  * @returns {Object} style object
  */
+/**
+ * 解析当前路由中的历史记录 ID。
+ *
+ * @returns {number|null} 历史记录 ID
+ */
+const resolveRouteRecordId = () => {
+  const routeRecordId = Number(route.query.recordId)
+  return Number.isInteger(routeRecordId) && routeRecordId > 0 ? routeRecordId : null
+}
+
+/**
+ * 根据记录 ID 加载指定的出血检测历史结果，接口异常时回退到兜底数据。
+ *
+ * @param {number|string} recordId - 历史记录 ID
+ * @param {Object|null} fallbackPayload - 兜底结果
+ */
+const loadHemorrhageRecordById = async (recordId, fallbackPayload = null) => {
+  try {
+    const response = await getHemorrhageRecord(recordId)
+    const record = response?.data
+
+    if (record) {
+      applyHemorrhageResult(normalizeHemorrhagePayload(record))
+      return
+    }
+  } catch (error) {
+    console.error('加载指定历史记录失败', error)
+  }
+
+  if (fallbackPayload) {
+    applyHemorrhageResult(fallbackPayload)
+    return
+  }
+
+  clearHemorrhageResult()
+}
+
 const getBboxStyle = (box) => {
   if (!box || box.length !== 4) return {}
   if (!imageMeta.value.width || !imageMeta.value.height) return {}
 
   const [x, y, w, h] = box
-  // 计算百分比位置
   const left = (x / imageMeta.value.width) * 100
   const top = (y / imageMeta.value.height) * 100
   const width = (w / imageMeta.value.width) * 100
@@ -457,13 +903,14 @@ const getBboxStyle = (box) => {
     position: 'absolute',
     border: '2px solid #F56C6C',
     boxShadow: '0 0 8px rgba(245, 108, 108, 0.6)',
-    zIndex: 10
+    zIndex: 10,
   }
 }
 
 /**
- * 打开上传配置弹窗
- * @param {string} mode - 'local' 或 'pacs'
+ * 打开上传配置弹窗。
+ *
+ * @param {string} mode - local 或 pacs
  */
 const openUploadDialog = (mode = 'local') => {
   uploadMode.value = mode
@@ -474,258 +921,248 @@ const openUploadDialog = (mode = 'local') => {
 }
 
 /**
- * 处理文件选择变更
+ * 处理文件选择变更。
+ *
+ * @param {Object} file - 上传组件返回的文件对象
  */
 const handleDialogFileChange = (file) => {
-  selectedFile.value = file.raw
+  const rawFile = file?.raw || null
+  const isSupportedImage = rawFile && /\.(png|jpg|jpeg|bmp)$/i.test(rawFile.name || '')
+
+  if (rawFile && !isSupportedImage) {
+    selectedFile.value = null
+    ElMessage.warning('当前脑出血模型仅支持 PNG/JPG/JPEG/BMP 图片，暂不支持 DICOM 文件')
+    return
+  }
+
+  selectedFile.value = rawFile
 }
 
 /**
- * 模拟 PACS 系统检索过程
+ * 处理文件移除。
+ */
+const handleDialogFileRemove = () => {
+  selectedFile.value = null
+}
+
+/**
+ * 当前环境尚未对接真实 PACS，统一引导改用本地上传。
  */
 const simulatePacsSelect = () => {
-  ElMessage.success('已连接 PACS 系统，正在检索今日检查列表...')
-  setTimeout(() => {
-    // 模拟自动填充
-    uploadForm.patientName = '张伟'
-    uploadForm.examId = 'PACS_HEMO_20231024'
-    selectedFile.value = null
-    uploadMode.value = 'pacs'
-    uploadDialogVisible.value = true
-    ElMessage.success('已自动获取 PACS 影像信息，请确认')
-  }, 600)
+  ElMessage.warning('当前环境暂未接入真实 PACS，请使用本地影像上传')
+  openUploadDialog('local')
 }
 
 /**
- * 重置上传状态
+ * 重置上传状态。
  */
 const resetUpload = () => {
-  openUploadDialog()
+  openUploadDialog('local')
 }
 
 /**
  * @function handleReanalyze
  * @description 重新分析当前案例
  *
- * @backend-api [POST] /api/v1/quality/hemorrhage (复用分析接口)
+ * @backend-api [POST] /api/v1/quality/hemorrhage（复用分析接口）
  */
 const handleReanalyze = () => {
-    startAnalysisProcess()
+  if (!selectedFile.value) {
+    ElMessage.warning('当前仅支持基于本地文件重新分析，请重新上传影像')
+    openUploadDialog('local')
+    return
+  }
+
+  startAnalysisProcess()
 }
 
 /**
  * @function handleExport
- * @description 导出报告 (未实现)
- *
- * @backend-api [GET] /api/v1/quality/hemorrhage/report/export (计划中)
+ * @description 导出当前案例的真实检测报告
  */
 const handleExport = () => {
-    ElMessage.success('报告导出中...')
+  if (!qcItems.value.length) {
+    ElMessage.warning('暂无可导出的检测报告')
+    return
+  }
+
+  const reportLines = [
+    '头部出血 AI 智能检测报告',
+    `导出时间：${formatDateTime(new Date())}`,
+    '',
+    `患者姓名：${patientInfo.value.name}`,
+    `检查ID：${patientInfo.value.studyId}`,
+    `检查日期：${patientInfo.value.studyDate}`,
+    `推理设备：${inferenceDevice.value}`,
+    `检测模型：${modelName.value || '--'}`,
+    `结果时间：${recordCreatedAt.value || '--'}`,
+    '',
+    `AI 判定：${hasHemorrhage.value ? '疑似出血' : '未见异常'}`,
+    `主要异常：${primaryIssue.value}`,
+    `出血风险：${hemorrhageProb.value.toFixed(1)}%`,
+    `置信度：${confidenceLevel.value}`,
+    '',
+    '检测详情：',
+    ...qcItems.value.map((item, index) => `${index + 1}. ${item.name} - ${item.status} - ${item.detail}`),
+  ]
+
+  const blob = new Blob([reportLines.join('\r\n')], { type: 'text/plain;charset=utf-8;' })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `脑出血检测报告_${patientInfo.value.studyId || 'report'}_${Date.now()}.txt`
+  link.click()
+  window.URL.revokeObjectURL(url)
+  ElMessage.success('报告导出成功')
 }
 
 /**
- * 查看详情
+ * 查看详情。
+ *
+ * @param {Object} item - 当前质控项
  */
 const viewDetails = (item) => {
-    currentItem.value = item
-    dialogVisible.value = true
+  currentItem.value = item
+  dialogVisible.value = true
 }
 
 /**
- * 添加分析日志
+ * 添加分析日志。
+ *
+ * @param {string} message - 日志内容
  */
-const addLog = (msg) => {
+const addLog = (message) => {
   const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  analysisLogs.value.unshift({ time, message: msg })
-  // 保持日志数量不超过 5 条
-  if (analysisLogs.value.length > 5) analysisLogs.value.pop()
+  analysisLogs.value.unshift({ time, message })
+
+  if (analysisLogs.value.length > 5) {
+    analysisLogs.value.pop()
+  }
 }
 
 /**
- * 提交表单并开始分析流程
- * 包含表单验证和模式判断
+ * 提交表单并开始分析流程。
  */
 const submitUpload = async () => {
   if (!uploadFormRef.value) return
 
-  await uploadFormRef.value.validate(async (valid) => {
-    if (valid) {
-      if (uploadMode.value === 'local' && !selectedFile.value) {
-        ElMessage.warning('请上传影像文件')
-        return
-      }
-      uploadDialogVisible.value = false
-      startAnalysisProcess()
-    }
-  })
+  try {
+    await uploadFormRef.value.validate()
+  } catch {
+    return
+  }
+
+  if (uploadMode.value !== 'local') {
+    ElMessage.warning('当前环境暂未接入真实 PACS，请使用本地影像上传')
+    openUploadDialog('local')
+    return
+  }
+
+  if (!selectedFile.value) {
+    ElMessage.warning('请上传影像文件')
+    return
+  }
+
+  uploadDialogVisible.value = false
+  await startAnalysisProcess()
 }
 
 /**
  * @function startAnalysisProcess
  * @description 启动 AI 分析流程
- * 包含进度条模拟、API 调用和结果处理
+ * 包含进度条动画、真实 API 调用和数据库结果回显。
  *
- * @backend-api [POST] /api/v1/quality/hemorrhage (通过 predictHemorrhage 调用)
+ * @backend-api [POST] /api/v1/quality/hemorrhage（通过 predictHemorrhage 调用）
  */
 const startAnalysisProcess = async () => {
+  if (!selectedFile.value) {
+    ElMessage.warning('请先上传影像文件')
+    return
+  }
+
   qcItems.value = []
   analyzing.value = true
   analyzeProgress.value = 0
   analysisLogs.value = []
-
-  // 1. 启动进度条动画 (假的缓慢进度，用于提升用户体验)
+  currentItem.value = null
   addLog('正在初始化 AI 引擎...')
   currentAnalysisStep.value = '初始化'
 
-  // 进度条定时器
   const progressTimer = setInterval(() => {
     if (analyzeProgress.value < 90) {
-      // 随机增加进度，模拟真实感
       analyzeProgress.value += Math.random() * 2
 
-      // 更新状态文字
       if (analyzeProgress.value > 10 && analyzeProgress.value < 30) {
-         currentAnalysisStep.value = '图像预处理'
+        currentAnalysisStep.value = '图像预处理'
       } else if (analyzeProgress.value > 40 && analyzeProgress.value < 70) {
-         currentAnalysisStep.value = '神经网络推理'
+        currentAnalysisStep.value = '神经网络推理'
       } else if (analyzeProgress.value > 80) {
-         currentAnalysisStep.value = '生成报告'
+        currentAnalysisStep.value = '生成报告'
       }
     }
   }, 100)
 
   try {
-    let res;
+    addLog('正在上传影像并请求分析...')
+    const response = await predictHemorrhage(selectedFile.value, {
+      patientName: uploadForm.patientName,
+      examId: uploadForm.examId,
+    })
 
-    // 2. 根据模式调用不同的处理逻辑
-    if (uploadMode.value === 'pacs') {
-        // PACS 模式：模拟延迟 (Mock) - 固定 500ms
-        addLog('正在从 PACS 拉取影像序列...')
-        await new Promise(r => setTimeout(r, 200))
-        addLog('影像拉取成功，开始分析...')
-        await new Promise(r => setTimeout(r, 300))
-
-        // Mock 数据返回
-        res = {
-         success: true,
-         prediction: '未出血',
-         hemorrhage_probability: 0.02,
-         confidence_level: '高置信度',
-         duration: 320,
-         model_name: 'ResNet50 + CV Hybrid',
-         bbox: null,
-         midline_shift: false,
-         shift_score: 1.2,
-         device: 'Mock-CUDA', // 模拟设备
-         image_width: 512,
-         image_height: 512,
-         image_url: null
-       }
-    } else {
-        // Local 模式：真实 API 调用
-        addLog('正在上传影像并请求分析...')
-        // 调用封装好的 predictHemorrhage API
-        // 真实等待 API 返回，期间进度条会卡在 90% 左右
-        res = await predictHemorrhage(selectedFile.value, {
-          patientName: uploadForm.patientName,
-          examId: uploadForm.examId
-        })
-    }
-
-    // 3. 请求完成，处理收尾工作
     clearInterval(progressTimer)
     analyzeProgress.value = 100
     currentAnalysisStep.value = '分析完成'
 
-    // 显示真实的分析耗时
-    const duration = res.duration || 0
+    const normalizedPayload = normalizeHemorrhagePayload({
+      ...response,
+      patientName: resolveText(response?.patient_name, uploadForm.patientName),
+      examId: resolveText(response?.exam_id, uploadForm.examId),
+    })
+    const duration = resolveNumber(response?.analysis_duration, response?.duration)
+
     addLog(`AI 分析完成，耗时: ${duration} ms`)
-    addLog(`推理设备: ${res.device || 'Unknown'}`)
+    addLog(`推理设备: ${normalizedPayload.device || '--'}`)
 
-    // 4. 渲染结果 (无需额外延迟，直接显示)
-    finalizeAnalysis(res, uploadMode.value === 'pacs')
+    if (resolveRouteRecordId()) {
+      await router.replace({ path: route.path, query: {} })
+    }
 
+    await loadLatestHemorrhageRecord(normalizedPayload)
   } catch (error) {
     clearInterval(progressTimer)
     analyzing.value = false
-    ElMessage.error(error.message || '分析失败')
-    addLog('错误: ' + error.message)
+
+    const errorMessage = error?.message || '分析失败'
+    ElMessage.error(errorMessage)
+    addLog(`错误: ${errorMessage}`)
   }
 }
 
 /**
- * @function finalizeAnalysis
- * @description 处理分析结果数据
- * 将后端返回的数据填充到页面状态中
- * @param {Object} res - 后端响应数据
- * @param {boolean} isMock - 是否为模拟模式
+ * 页面挂载时仅在带有历史记录 ID 的情况下回显对应记录。
+ * 默认进入页面时保持空白上传态，与其他质控页面一致。
  */
-const finalizeAnalysis = (res, isMock = false) => {
-  analyzing.value = false
-
-  // 填充核心指标
-  hasHemorrhage.value = res.prediction === '出血'
-  // 防止 NaN 显示
-  const prob = res.hemorrhage_probability || (res.probability ? res.probability.hemorrhage : 0)
-  hemorrhageProb.value = isNaN(prob) ? '0.0' : (prob * 100).toFixed(1)
-
-  inferenceDevice.value = res.device || 'CPU' // 显示设备
-  modelName.value = res.model_name
-  bboxes.value = res.bboxes
-  confidenceLevel.value = res.confidence_level || res.confidence // 兼容后端不同字段名
-
-  // 设置预览图
-  // 后端现在返回 image_url (静态资源路径)
-  if (res.image_url) {
-      // 拼接完整 URL (开发环境下 Vite 代理 /uploads 到后端)
-      // 如果后端返回 /uploads/xxx，前端直接用即可
-      imageUrl.value = res.image_url
-  } else if (res.image_base64) {
-      imageUrl.value = `data:image/png;base64,${res.image_base64}`
+onMounted(() => {
+  const routeRecordId = resolveRouteRecordId()
+  if (routeRecordId) {
+    loadHemorrhageRecordById(routeRecordId)
+    return
   }
 
-  // 更新图像元数据
-  imageMeta.value = { width: res.image_width || 512, height: res.image_height || 512 }
+  clearHemorrhageResult()
+})
 
-  // 更新患者信息
-  patientInfo.value = {
-      name: uploadForm.patientName,
-      gender: '男', // 模拟数据
-      age: 45,      // 模拟数据
-      studyId: uploadForm.examId,
-      accessionNumber: uploadForm.examId,
-      studyDate: new Date().toLocaleDateString(),
-      device: 'GE Revolution CT'
+watch(() => route.query.recordId, () => {
+  const routeRecordId = resolveRouteRecordId()
+  if (routeRecordId) {
+    loadHemorrhageRecordById(routeRecordId)
+    return
   }
 
-  // 填充质控检测列表 (根据后端结果动态生成)
-  // 注意：这里使用了后端返回的真实分析数据
-  qcItems.value = [
-    {
-      name: '脑出血检测',
-      type: 'hemorrhage', // 标识类型，用于详情页特殊展示
-      description: '检测是否存在脑实质内高密度出血灶',
-      status: res.prediction === '出血' ? '异常' : '正常',
-      detail: res.prediction === '出血'
-        ? `检测到疑似出血区域 (置信度: ${isNaN(prob) ? '0.0' : (prob * 100).toFixed(1)}%)`
-        : '未检测到明显出血灶',
-    },
-    {
-      name: '中线偏移',
-      type: 'midline',
-      description: '检测脑中线结构是否发生位移',
-      status: res.midline_shift ? '异常' : '正常',
-      detail: res.midline_detail || (res.midline_shift ? '检测到中线偏移' : '中线结构居中'),
-    },
-    {
-       name: '脑室结构',
-       type: 'ventricle',
-       description: '检测脑室系统形态及密度是否正常',
-       status: res.ventricle_issue ? '异常' : '正常',
-       detail: res.ventricle_detail || (res.ventricle_issue ? '脑室形态异常' : '脑室系统形态正常'),
-    }
-  ]
-}
+  if (!analyzing.value) {
+    clearHemorrhageResult()
+  }
+})
 </script>
 
 <style scoped>
@@ -1013,6 +1450,24 @@ const finalizeAnalysis = (res, isMock = false) => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.summary-primary-issue {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.primary-issue-text {
+  font-weight: 600;
+}
+
+.primary-issue-text.is-danger {
+  color: #f56c6c;
+}
+
+.primary-issue-text.is-normal {
+  color: #909399;
 }
 
 /* 列表样式 */

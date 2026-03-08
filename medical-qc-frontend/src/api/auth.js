@@ -1,4 +1,4 @@
-// src/api/auth.js
+﻿// src/api/auth.js
 // ----------------------------------------------------------------------------------
 // 认证模块前端 API (Auth API)
 // 作用：提供前端登录、注册的接口调用方法。
@@ -19,8 +19,8 @@ export const logout = () => {
 }
 
 // 获取当前用户信息 (检查 Session 有效性)
-export const getCurrentUser = () => {
-  return request.get('/auth/current')
+export const getCurrentUser = (config = {}) => {
+  return request.get('/auth/current', config)
 }
 
 // 用户注册

@@ -1,120 +1,129 @@
 package com.medical.qc.controller;
 
-import org.springframework.web.bind.annotation.*;
-import java.util.*;
+import com.medical.qc.entity.User;
+import com.medical.qc.service.IssueService;
+import com.medical.qc.support.SessionUserSupport;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 /**
- * 异常汇总与统计 API 控制器 (Mock)
- * 提供系统整体的质控统计数据，目前为模拟数据，
- * 后期需对接数据库进行实时统计。
+ * 异常汇总与工单处理 API 控制器。
+ * 当前优先基于脑出血检测历史记录生成统一异常工单，
+ * 其他质控项后续按相同方式逐步接入。
  */
 @RestController
 @RequestMapping("/api/v1/summary")
 public class SummaryController {
+    @Autowired
+    private IssueService issueService;
+
+    @Autowired
+    private SessionUserSupport sessionUserSupport;
 
     /**
-     * 获取总体统计指标
-     * @return 包含扫描总量、今日扫描、待处理问题、质量评分的 Map
+     * 获取异常汇总页顶部统计卡片数据。
+     *
+     * @param session 当前会话
+     * @return 统计结果
      */
     @GetMapping("/stats")
-    public Map<String, Object> getSummaryStats() {
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("total_scans", 12580);
-        stats.put("today_scans", 145);
-        stats.put("pending_issues", 23);
-        stats.put("quality_score", 98.5);
-        return stats;
+    public ResponseEntity<?> getSummaryStats(HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.getSummaryStats(sessionUserSupport.resolveScopedUserId(user)));
     }
 
     /**
-     * 获取问题趋势数据 (图表)
-     * @param days 统计天数 (默认7天)
-     * @return 日期列表和对应的问题数量
+     * 获取异常趋势图数据。
+     *
+     * @param days 统计天数
+     * @param session 当前会话
+     * @return 趋势图数据
      */
     @GetMapping("/trend")
-    public Map<String, Object> getIssueTrend(@RequestParam(value = "days", defaultValue = "7") int days) {
-        Map<String, Object> response = new HashMap<>();
-        List<String> dates = new ArrayList<>();
-        List<Integer> issues = new ArrayList<>();
-        
-        // Mock data for the last 'days' days
-        // TODO: 从数据库聚合查询每日异常数量
-        for (int i = 0; i < days; i++) {
-            dates.add("Day " + (i + 1));
-            issues.add((int) (Math.random() * 10)); // Random issues count 0-10
-        }
-        
-        response.put("dates", dates);
-        response.put("issues", issues);
-        return response;
+    public ResponseEntity<?> getIssueTrend(
+            @RequestParam(value = "days", defaultValue = "7") int days,
+            HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.getIssueTrend(sessionUserSupport.resolveScopedUserId(user), days));
     }
 
     /**
-     * 获取问题类型分布 (饼图)
-     * @return 各类问题的名称和数量
+     * 获取异常类型分布数据。
+     *
+     * @param session 当前会话
+     * @return 分布数据
      */
     @GetMapping("/distribution")
-    public List<Map<String, Object>> getIssueDistribution() {
-        // TODO: 从数据库统计各类型异常的占比
-        List<Map<String, Object>> distribution = new ArrayList<>();
-        
-        Map<String, Object> item1 = new HashMap<>();
-        item1.put("name", "运动伪影");
-        item1.put("value", 35);
-        distribution.add(item1);
-        
-        Map<String, Object> item2 = new HashMap<>();
-        item2.put("name", "金属伪影");
-        item2.put("value", 20);
-        distribution.add(item2);
-        
-        Map<String, Object> item3 = new HashMap<>();
-        item3.put("name", "对比度低");
-        item3.put("value", 15);
-        distribution.add(item3);
-        
-        Map<String, Object> item4 = new HashMap<>();
-        item4.put("name", "其他");
-        item4.put("value", 10);
-        distribution.add(item4);
-        
-        return distribution;
+    public ResponseEntity<?> getIssueDistribution(HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.getIssueDistribution(sessionUserSupport.resolveScopedUserId(user)));
     }
 
     /**
-     * 获取近期异常记录列表 (分页)
+     * 获取异常工单分页列表。
+     *
      * @param page 页码
      * @param limit 每页数量
-     * @param query 搜索关键词
-     * @param status 状态过滤
-     * @return 分页列表数据
+     * @param query 搜索关键字
+     * @param status 状态筛选
+     * @param session 当前会话
+     * @return 分页结果
      */
     @GetMapping("/recent")
-    public Map<String, Object> getRecentIssues(
+    public ResponseEntity<?> getRecentIssues(
             @RequestParam(value = "page", defaultValue = "1") int page,
             @RequestParam(value = "limit", defaultValue = "10") int limit,
             @RequestParam(value = "query", required = false) String query,
-            @RequestParam(value = "status", required = false) String status) {
-        
-        // TODO: 实现基于 MyBatis Plus 的分页查询
-        Map<String, Object> response = new HashMap<>();
-        List<Map<String, Object>> items = new ArrayList<>();
-        
-        // Mock 10 items
-        for (int i = 0; i < limit; i++) {
-            Map<String, Object> item = new HashMap<>();
-            item.put("id", i + 1);
-            item.put("patient_name", "张三 " + (char)('A' + i));
-            item.put("exam_id", "EXAM-" + (1000 + i));
-            item.put("scan_type", "头部 CT");
-            item.put("issue_type", "运动伪影");
-            item.put("status", "待处理");
-            item.put("timestamp", new Date());
-            items.add(item);
-        }
-        
-        response.put("total", 100); // Mock total count
-        response.put("items", items);
-        return response;
+            @RequestParam(value = "status", required = false) String status,
+            HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.getIssuePage(
+                sessionUserSupport.resolveScopedUserId(user), page, limit, query, status));
+    }
+
+    /**
+     * 获取异常工单详情及其来源记录明细。
+     *
+     * @param issueId 工单 ID
+     * @param session 当前会话
+     * @return 工单详情
+     */
+    @GetMapping("/issues/{issueId}")
+    public ResponseEntity<?> getIssueDetail(
+            @PathVariable("issueId") Long issueId,
+            HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.getIssueDetail(sessionUserSupport.resolveScopedUserId(user), issueId));
+    }
+
+    /**
+     * 更新异常工单状态。
+     *
+     * @param issueId 工单 ID
+     * @param requestBody 请求体，包含 status 和 remark
+     * @param session 当前会话
+     * @return 更新后的工单信息
+     */
+    @PatchMapping("/issues/{issueId}/status")
+    public ResponseEntity<?> updateIssueStatus(
+            @PathVariable("issueId") Long issueId,
+            @RequestBody(required = false) Map<String, String> requestBody,
+            HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        String status = requestBody == null ? null : requestBody.get("status");
+        String remark = requestBody == null ? null : requestBody.get("remark");
+
+        return ResponseEntity.ok(issueService.updateIssueStatus(
+                sessionUserSupport.resolveScopedUserId(user), user.getId(), issueId, status, remark));
     }
 }

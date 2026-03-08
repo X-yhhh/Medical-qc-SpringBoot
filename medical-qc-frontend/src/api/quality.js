@@ -120,7 +120,7 @@ export const detectCoronaryCTA = (file) => {
 /**
  * @function predictHemorrhage
  * @description 脑出血智能检测 (Real AI Service)
- * @param {File} file - DICOM/图片文件
+ * @param {File} file - PNG/JPG/JPEG/BMP 图片文件
  * @param {Object} metadata - 额外的元数据 (如患者姓名、检查ID)
  * @returns {Promise<Object>} 后端返回的检测结果
  *
@@ -144,6 +144,11 @@ export const predictHemorrhage = async (file, metadata = {}) => {
   } catch (error) {
     console.error('脑出血检测失败:', error)
 
+    const detailMessage = error.response?.data?.detail
+    if (detailMessage) {
+      throw new Error(detailMessage)
+    }
+
     if (error.response) {
       throw new Error(`后端返回错误: ${error.response.status} ${error.response.statusText}`)
     } else if (error.request) {
@@ -160,15 +165,32 @@ export const predictHemorrhage = async (file, metadata = {}) => {
  * @param {number} limit - 获取记录的数量限制
  * @returns {Promise<Object>} 历史记录列表
  *
- * @backend-api (Planned) GET /api/v1/quality/hemorrhage/history
+ * @backend-api GET /api/v1/quality/hemorrhage/history
  */
 export const getHemorrhageHistory = async (limit = 20) => {
   try {
-    // TODO: 后端暂未实现此接口，预留位置
-    // const response = await request.get('/quality/hemorrhage/history', { params: { limit } })
-    return { data: [] } // 临时返回空数据
+    const response = await request.get('/quality/hemorrhage/history', { params: { limit } })
+    return response
   } catch (error) {
     console.error('获取历史记录失败', error)
     return { data: [] }
+  }
+}
+
+/**
+ * @function getHemorrhageRecord
+ * @description 获取指定的出血检测历史记录详情
+ * @param {number|string} recordId - 历史记录 ID
+ * @returns {Promise<Object>} 接口响应结果
+ *
+ * @backend-api GET /api/v1/quality/hemorrhage/history/{recordId}
+ */
+export const getHemorrhageRecord = async (recordId) => {
+  try {
+    const response = await request.get(`/quality/hemorrhage/history/${recordId}`)
+    return response
+  } catch (error) {
+    console.error('获取指定出血检测历史记录失败', error)
+    throw error
   }
 }

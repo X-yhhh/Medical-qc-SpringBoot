@@ -1,40 +1,14 @@
 package com.medical.qc.bean;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
-
-public class RegisterReq {
-    private String username;
-    private String email;
-    private String password;
-    @JsonAlias("full_name")
+/**
+ * 管理员更新用户信息请求体。
+ */
+public class AdminUserUpdateReq {
     private String fullName;
     private String hospital;
     private String department;
     private String role;
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getEmail() {
-        return email;
-    }
-
-    public void setEmail(String email) {
-        this.email = email;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
+    private Boolean isActive;
 
     public String getFullName() {
         return fullName;
@@ -66,5 +40,13 @@ public class RegisterReq {
 
     public void setRole(String role) {
         this.role = role;
+    }
+
+    public Boolean getIsActive() {
+        return isActive;
+    }
+
+    public void setIsActive(Boolean active) {
+        isActive = active;
     }
 }

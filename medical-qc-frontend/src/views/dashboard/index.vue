@@ -4,15 +4,15 @@
     <!-- 顶部欢迎区: 展示用户信息及今日待办概览 -->
     <div class="welcome-section">
       <div class="welcome-text">
-        <h2>你好, XXX医生</h2>
-        <p>今日待处理影像质控任务 <span class="highlight-text">28</span> 项，请及时处理。</p>
+        <h2>你好, {{ welcomeName }}</h2>
+        <p>{{ welcomeDescription }} <span class="highlight-text">{{ pendingTaskCount }}</span> 项，请及时处理。</p>
       </div>
       <div class="date-info">
         <el-tag effect="dark" type="primary">{{ currentDate }}</el-tag>
       </div>
     </div>
 
-    <!-- 核心数据看板: 展示关键质控指标 (目前使用静态模拟数据) -->
+    <!-- 核心数据看板: 展示关键质控指标 (实时来自后端聚合数据) -->
     <el-row :gutter="20" class="stats-row">
       <el-col :span="6" v-for="item in statsData" :key="item.title">
         <el-card shadow="hover" class="stats-card">
@@ -46,9 +46,9 @@
           <template #header>
             <div class="card-header">
               <span class="header-title">
-                <el-icon><Monitor /></el-icon> 影像质控工作台
+                <el-icon><Monitor /></el-icon> {{ quickAccessTitle }}
               </span>
-              <el-button text type="primary">查看全部</el-button>
+              <el-button text type="primary" @click="handleQuickAccessHeaderClick">{{ quickAccessActionText }}</el-button>
             </div>
           </template>
 
@@ -59,7 +59,7 @@
                 class="quick-access-item"
                 v-for="item in quickAccessItems"
                 :key="item.path"
-                @click="$router.push(item.path)"
+                @click="router.push(item.path)"
               >
                 <div class="icon-wrapper" :style="{ background: item.color }">
                   <el-icon><component :is="item.icon" /></el-icon>
@@ -71,44 +71,78 @@
 
             <!-- 侧边栏: 最近访问与常用操作 -->
             <div class="quick-access-sidebar">
-              <div class="sidebar-title">最近访问</div>
-              <div class="recent-list">
-                <div class="recent-item" v-for="item in recentVisits" :key="item.id">
+              <div class="sidebar-title">{{ recentPanelTitle }}</div>
+              <div v-if="recentVisits.length" class="recent-list">
+                <div class="recent-item" v-for="item in recentVisits" :key="item.id" @click="handleRecentVisitClick(item)">
                   <el-tag size="small" :type="item.type" effect="plain" class="recent-tag">{{
                     item.tag
                   }}</el-tag>
-                  <span class="recent-text">{{ item.name }}</span>
+                  <span class="recent-text">
+                    <span class="recent-name">{{ item.name }}</span>
+                    <span :class="['recent-issue', item.tag === '合格' ? 'recent-issue-normal' : '']">{{ item.issue }}</span>
+                  </span>
                   <span class="recent-time">{{ item.time }}</span>
                 </div>
               </div>
+              <el-empty v-else :description="recentEmptyText" :image-size="70" />
 
               <div class="sidebar-divider"></div>
 
-              <div class="sidebar-title">快捷操作</div>
+              <div class="sidebar-title">{{ actionPanelTitle }}</div>
               <div class="action-buttons">
-                <el-button type="primary" plain size="small" icon="Upload">上传影像</el-button>
-                <el-button type="success" plain size="small" icon="DocumentAdd">新建报告</el-button>
-                <el-button type="warning" plain size="small" icon="Setting">质控配置</el-button>
+                <el-button
+                  v-for="action in sideActionButtons"
+                  :key="action.label"
+                  :type="action.type"
+                  plain
+                  size="small"
+                  :icon="action.icon"
+                  @click="router.push(action.path)"
+                >{{ action.label }}</el-button>
               </div>
             </div>
           </div>
         </el-card>
 
-        <!-- 质控趋势图表区域 (预留 ECharts 挂载点) -->
+        <!-- 质控运行趋势区域 -->
         <el-card class="box-card" shadow="never" style="margin-top: 20px">
           <template #header>
             <div class="card-header">
               <span class="header-title">
-                <el-icon><TrendCharts /></el-icon> 质控合格率趋势
+                <el-icon><TrendCharts /></el-icon> 质控运行趋势
               </span>
               <el-radio-group v-model="chartPeriod" size="small">
-                <el-radio-button value="week">本周</el-radio-button>
-                <el-radio-button value="month">本月</el-radio-button>
+                <el-radio-button label="week">本周</el-radio-button>
+                <el-radio-button label="month">本月</el-radio-button>
               </el-radio-group>
             </div>
           </template>
-          <div class="chart-placeholder">
-            <el-empty description="数据可视化图表区域 (ECharts)" :image-size="100"></el-empty>
+
+          <div class="trend-summary-grid">
+            <div
+              v-for="item in trendSummaryItems"
+              :key="item.label"
+              :class="['trend-summary-item', `is-${item.type}`]"
+            >
+              <div class="trend-summary-label">{{ item.label }}</div>
+              <div class="trend-summary-value">
+                {{ item.value }}
+                <span v-if="item.unit" class="trend-summary-unit">{{ item.unit }}</span>
+              </div>
+              <div class="trend-summary-extra">{{ item.extra }}</div>
+            </div>
+          </div>
+
+          <div v-if="hasDashboardTrendData" ref="dashboardTrendChartRef" class="trend-chart"></div>
+          <div v-else class="trend-empty-state">
+            <el-empty :image-size="88">
+              <template #description>
+                <div class="trend-empty-desc">
+                  <div class="trend-empty-title">暂无可视化趋势数据</div>
+                  <div class="trend-empty-text">完成脑出血检测后，这里将展示检查量、异常量、合格率与平均质控分的变化。</div>
+                </div>
+              </template>
+            </el-empty>
           </div>
         </el-card>
       </el-col>
@@ -122,10 +156,10 @@
               <span class="header-title risk-title">
                 <el-icon><Warning /></el-icon> 近期风险预警
               </span>
-              <el-tag type="danger" effect="plain" size="small">3 项高危</el-tag>
+              <el-tag type="danger" effect="plain" size="small">{{ highRiskCount }} 项高危</el-tag>
             </div>
           </template>
-          <div class="risk-list">
+          <div v-if="riskList.length" class="risk-list">
             <div class="risk-item" v-for="(risk, index) in riskList" :key="index">
               <div class="risk-icon">
                 <el-icon color="#F56C6C"><WarningFilled /></el-icon>
@@ -134,9 +168,10 @@
                 <div class="risk-text">{{ risk.content }}</div>
                 <div class="risk-time">{{ risk.time }}</div>
               </div>
-              <el-button type="primary" link size="small" style="margin-left: 15px">处理</el-button>
+              <el-button type="primary" link size="small" style="margin-left: 15px" @click="$router.push(risk.targetRoute || '/issues')">处理</el-button>
             </div>
           </div>
+          <el-empty v-else description="暂无风险预警" :image-size="80"></el-empty>
         </el-card>
 
         <!-- 待办事项时间轴 -->
@@ -148,7 +183,7 @@
               </span>
             </div>
           </template>
-          <el-timeline style="padding-left: 10px">
+          <el-timeline v-if="activities.length" style="padding-left: 10px">
             <el-timeline-item
               v-for="(activity, index) in activities"
               :key="index"
@@ -160,6 +195,7 @@
               {{ activity.content }}
             </el-timeline-item>
           </el-timeline>
+          <el-empty v-else description="暂无待办事项" :image-size="80"></el-empty>
         </el-card>
       </el-col>
     </el-row>
@@ -173,36 +209,164 @@
  * 展示核心质控数据指标、快捷功能入口、风险预警及待办事项。
  *
  * 对接API说明:
- * - 本页面目前主要使用静态模拟数据进行展示
- * - statsData: 对应后端 /api/dashboard/stats 接口 (待开发)
- * - riskList: 对应后端 /api/dashboard/risks 接口 (待开发)
- * - activities: 对应后端 /api/dashboard/activities 接口 (待开发)
+ * - statsData / riskList / activities / welcome: 对应后端 /api/v1/dashboard/overview
+ * - chartTrend: 对应后端 /api/v1/dashboard/trend
+ * - recentVisits: 对应后端 /api/v1/quality/hemorrhage/history 接口（已接入真实数据库）
  */
 
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
+import * as echarts from 'echarts'
+import { getHemorrhageHistory } from '@/api/quality'
+import { getDashboardOverview, getDashboardTrend } from '@/api/dashboard'
+import { getStoredUserInfo } from '@/utils/auth'
+
+const router = useRouter()
 
 // 当前日期显示
 const currentDate = ref(dayjs().format('YYYY年MM月DD日 dddd'))
 // 图表统计周期选择 (week/month)
 const chartPeriod = ref('week')
+const welcomeName = ref('医生')
+const pendingTaskCount = ref(0)
+const statsData = ref([])
+const riskList = ref([])
+const highRiskCount = ref(0)
+const activities = ref([])
+const dashboardTrendChartRef = ref(null)
+let dashboardTrendChart = null
+
+const currentUserInfo = computed(() => getStoredUserInfo())
+const isAdminView = computed(() => currentUserInfo.value?.role === 'admin')
+
+const welcomeDescription = computed(() => {
+  return isAdminView.value ? '当前待关注系统质控任务' : '今日待处理影像质控任务'
+})
+
+const quickAccessTitle = computed(() => {
+  return isAdminView.value ? '系统治理工作台' : '影像质控工作台'
+})
+
+const quickAccessActionText = computed(() => {
+  return isAdminView.value ? '进入用户管理' : '查看工单'
+})
+
+const recentPanelTitle = computed(() => {
+  return isAdminView.value ? '近期系统动态' : '最近访问'
+})
+
+const recentEmptyText = computed(() => {
+  return isAdminView.value ? '暂无系统动态' : '暂无最近访问'
+})
+
+const actionPanelTitle = computed(() => {
+  return isAdminView.value ? '管理捷径' : '快捷操作'
+})
 
 /**
- * 核心统计数据 (模拟)
- * 用于展示今日工作量及质控评分趋势
+ * 首页趋势图默认数据结构。
+ * 统一用于接口回填和空状态渲染，避免页面出现 undefined。
+ *
+ * @returns {Object} 趋势图默认数据
  */
-const statsData = [
-  { title: '今日检查总量', value: 427, unit: '例', icon: 'DataLine', trend: 12.5, type: 'primary' },
-  { title: 'AI 自动审核', value: 356, unit: '例', icon: 'Cpu', trend: 8.2, type: 'success' },
-  { title: '人工复核数', value: 71, unit: '例', icon: 'Edit', trend: -5.3, type: 'warning' },
-  { title: '平均质控分', value: 94.8, unit: '分', icon: 'Trophy', trend: 1.2, type: 'info' },
-]
+const createDefaultTrendData = () => ({
+  dates: [],
+  passRates: [],
+  totalCounts: [],
+  abnormalCounts: [],
+  averageScores: [],
+  summary: {
+    totalChecks: 0,
+    averagePassRate: 0,
+    averageScore: 0,
+    abnormalPeak: 0,
+    abnormalPeakDate: '--',
+    bestPassRate: 0,
+    bestPassRateDate: '--',
+    hasData: false,
+  },
+})
+
+const dashboardTrendData = ref(createDefaultTrendData())
+
+/**
+ * 当前趋势区是否存在可视化数据。
+ */
+const hasDashboardTrendData = computed(() => Boolean(dashboardTrendData.value?.summary?.hasData))
+
+/**
+ * 趋势区顶部概览指标。
+ * 用更直观的摘要帮助用户快速把握当前周期质控运行状态。
+ */
+const trendSummaryItems = computed(() => {
+  const summary = dashboardTrendData.value?.summary || createDefaultTrendData().summary
+  const periodText = chartPeriod.value === 'month' ? '最近30天' : '最近7天'
+
+  return [
+    {
+      label: '周期检查量',
+      value: summary.totalChecks || 0,
+      unit: '例',
+      extra: `${periodText}累计完成检查`,
+      type: 'primary',
+    },
+    {
+      label: '平均合格率',
+      value: Number(summary.averagePassRate || 0).toFixed(1),
+      unit: '%',
+      extra: summary.bestPassRateDate && summary.bestPassRateDate !== '--'
+        ? `最佳表现 ${summary.bestPassRateDate} · ${Number(summary.bestPassRate || 0).toFixed(1)}%`
+        : '等待首批趋势数据',
+      type: 'success',
+    },
+    {
+      label: '异常峰值',
+      value: summary.abnormalPeak || 0,
+      unit: '例',
+      extra: summary.abnormalPeakDate && summary.abnormalPeakDate !== '--'
+        ? `${summary.abnormalPeakDate} 风险最高`
+        : '当前周期未出现异常峰值',
+      type: 'danger',
+    },
+    {
+      label: '平均质控分',
+      value: Number(summary.averageScore || 0).toFixed(1),
+      unit: '分',
+      extra: '综合反映图像质量稳定度',
+      type: 'warning',
+    },
+  ]
+})
+
+/**
+ * 规范化首页趋势接口响应。
+ *
+ * @param {Object} response - 后端趋势接口响应
+ * @returns {Object} 清洗后的趋势数据
+ */
+const normalizeDashboardTrendData = (response) => {
+  const defaultTrend = createDefaultTrendData()
+  const summary = response?.summary || {}
+
+  return {
+    dates: Array.isArray(response?.dates) ? response.dates : defaultTrend.dates,
+    passRates: Array.isArray(response?.passRates) ? response.passRates : defaultTrend.passRates,
+    totalCounts: Array.isArray(response?.totalCounts) ? response.totalCounts : defaultTrend.totalCounts,
+    abnormalCounts: Array.isArray(response?.abnormalCounts) ? response.abnormalCounts : defaultTrend.abnormalCounts,
+    averageScores: Array.isArray(response?.averageScores) ? response.averageScores : defaultTrend.averageScores,
+    summary: {
+      ...defaultTrend.summary,
+      ...summary,
+    },
+  }
+}
 
 /**
  * 快捷入口配置
  * 配置系统各个子模块的路由跳转信息
  */
-const quickAccessItems = [
+const doctorQuickAccessItems = [
   {
     name: 'CT头部平扫',
     desc: '脑梗/出血筛查',
@@ -247,35 +411,421 @@ const quickAccessItems = [
   },
 ]
 
-/**
- * 风险提示列表 (模拟)
- * 展示最新的高风险质控问题
- */
-const riskList = [
-  { content: '发现 3 例 CT 头部扫描伪影过重，需重新扫描', time: '10:23' },
-  { content: '冠脉 CTA 重建失败率上升，建议检查设备', time: '09:45' },
-  { content: '急诊胸部 CT 辐射剂量超标预警', time: '08:30' },
+const adminQuickAccessItems = [
+  {
+    name: '用户与权限',
+    desc: '维护账号角色与启停状态',
+    path: '/admin/users',
+    icon: 'UserFilled',
+    color: 'linear-gradient(135deg, #5b8ff9 0%, #69c0ff 100%)',
+  },
+  {
+    name: '异常汇总',
+    desc: '查看全局异常工单与处理状态',
+    path: '/issues',
+    icon: 'DataAnalysis',
+    color: 'linear-gradient(135deg, #f6bd16 0%, #f6903d 100%)',
+  },
+  {
+    name: '风险预警',
+    desc: '聚焦高风险异常与待办事项',
+    path: '/issues',
+    icon: 'WarningFilled',
+    color: 'linear-gradient(135deg, #ff7875 0%, #ff9c6e 100%)',
+  },
+  {
+    name: '运行概览',
+    desc: '查看系统质控趋势与活跃动态',
+    path: '/dashboard',
+    icon: 'TrendCharts',
+    color: 'linear-gradient(135deg, #36cfc9 0%, #73d13d 100%)',
+  },
 ]
 
-/**
- * 待办事项列表 (模拟)
- * 展示医生的个人待办任务
- */
-const activities = [
-  { content: '审核早班急诊报告', timestamp: '08:00', type: 'primary', color: '#409EFF' },
-  { content: '参加科室质控周会', timestamp: '14:00', type: 'warning', color: '#E6A23C' },
-  { content: '整理月度质控报表', timestamp: '17:00', type: 'info', color: '#909399' },
-]
+const quickAccessItems = computed(() => {
+  return isAdminView.value ? adminQuickAccessItems : doctorQuickAccessItems
+})
 
 /**
- * 最近访问记录 (模拟)
- * 展示用户最近使用的功能或查看的病例
+ * 最近访问记录
+ * 展示用户最近完成的脑出血检测历史记录
  */
-const recentVisits = [
-  { id: 1, name: '张三 (CT00123)', type: 'danger', tag: '出血', time: '10分钟前' },
-  { id: 2, name: '李四 (CT00124)', type: 'primary', tag: '平扫', time: '35分钟前' },
-  { id: 3, name: '王五 (CT00125)', type: 'success', tag: '正常', time: '1小时前' },
-]
+const recentVisits = ref([])
+
+const sideActionButtons = computed(() => {
+  if (isAdminView.value) {
+    return [
+      { label: '用户管理', path: '/admin/users', icon: 'User', type: 'primary' },
+      { label: '异常工单', path: '/issues', icon: 'Warning', type: 'warning' },
+      { label: '趋势概览', path: '/dashboard', icon: 'TrendCharts', type: 'success' },
+    ]
+  }
+
+  return [
+    { label: '上传影像', path: '/hemorrhage', icon: 'Upload', type: 'primary' },
+    { label: '新建报告', path: '/head', icon: 'DocumentAdd', type: 'success' },
+    { label: '质控配置', path: '/issues', icon: 'Setting', type: 'warning' },
+  ]
+})
+
+/**
+ * 首页最近访问区域固定展示最近 3 条记录。
+ * 保持现有卡片布局不变，仅将数据源替换为后端实时历史记录。
+ */
+const RECENT_VISIT_LIMIT = 3
+
+const buildAdminRecentVisits = (activityList = []) => {
+  return activityList.slice(0, RECENT_VISIT_LIMIT).map((activity, index) => ({
+    id: `admin-${index}`,
+    name: '系统质控动态',
+    issue: activity.content,
+    type: activity.type === 'danger' ? 'danger' : activity.type === 'warning' ? 'warning' : 'primary',
+    tag: '系统',
+    time: activity.timestamp || '--',
+    path: '/issues',
+    query: undefined,
+  }))
+}
+
+/**
+ * 将后端返回的质控结论映射为 Element Plus 标签类型。
+ *
+ * @param {string} status - 后端返回的质控状态
+ * @returns {string} 标签样式类型
+ */
+const getRecentVisitType = (status) => {
+  if (status === '不合格') {
+    return 'danger'
+  }
+
+  if (status === '合格') {
+    return 'success'
+  }
+
+  return 'info'
+}
+
+/**
+ * 兼容历史数据：优先使用后端持久化的 qcStatus，若旧数据尚未补齐，则退化为 prediction 映射。
+ *
+ * @param {Object} record - 单条脑出血检测历史记录
+ * @returns {string} 最近访问标签文本
+ */
+const getRecentVisitTag = (record) => {
+  if (record?.qcStatus) {
+    return record.qcStatus
+  }
+
+  if (record?.prediction === '出血') {
+    return '不合格'
+  }
+
+  if (record?.prediction === '未出血') {
+    return '合格'
+  }
+
+  return '未知'
+}
+
+/**
+ * 拼接最近访问的主标题。
+ * 展示效果保持为“患者姓名 (检查号)”的现有样式。
+ *
+ * @param {Object} record - 单条脑出血检测历史记录
+ * @returns {string} 前端展示名称
+ */
+const buildRecentVisitName = (record) => {
+  const patientName = record?.patientName || '未命名患者'
+
+  return record?.examId ? `${patientName} (${record.examId})` : patientName
+}
+
+/**
+ * 获取首页最近访问展示的主异常项。
+ * 优先使用后端按严重度计算后的 primaryIssue；若旧数据尚未补齐，则前端按同规则兜底。
+ *
+ * @param {Object} record - 单条脑出血检测历史记录
+ * @returns {string} 最严重异常项文案
+ */
+const buildRecentVisitIssue = (record) => {
+  if (record?.primaryIssue) {
+    return record.primaryIssue
+  }
+
+  if (record?.prediction === '出血') {
+    return '脑出血'
+  }
+
+  if (record?.midlineShift) {
+    return record?.midlineDetail || '中线偏移'
+  }
+
+  if (record?.ventricleIssue) {
+    return record?.ventricleDetail || '脑室结构异常'
+  }
+
+  return '未见明显异常'
+}
+
+/**
+ * 将数据库中的创建时间格式化为首页展示文案。
+ *
+ * @param {string} createdAt - 历史记录创建时间
+ * @returns {string} 相对时间文本
+ */
+const formatRecentVisitTime = (createdAt) => {
+  const visitTime = dayjs(createdAt)
+
+  if (!visitTime.isValid()) {
+    return '--'
+  }
+
+  const minuteDiff = dayjs().diff(visitTime, 'minute')
+  if (minuteDiff < 1) {
+    return '刚刚'
+  }
+
+  if (minuteDiff < 60) {
+    return `${minuteDiff}分钟前`
+  }
+
+  const hourDiff = dayjs().diff(visitTime, 'hour')
+  if (hourDiff < 24) {
+    return `${hourDiff}小时前`
+  }
+
+  const dayDiff = dayjs().diff(visitTime, 'day')
+  if (dayDiff < 30) {
+    return `${dayDiff}天前`
+  }
+
+  return visitTime.format('MM-DD HH:mm')
+}
+
+/**
+ * 加载首页“最近访问”数据。
+ * 数据直接来自脑出血检测历史表，保证页面展示与数据库实时同步。
+ */
+const loadRecentVisits = async () => {
+  if (isAdminView.value) {
+    recentVisits.value = buildAdminRecentVisits(activities.value)
+    return
+  }
+
+  const response = await getHemorrhageHistory(RECENT_VISIT_LIMIT)
+  const historyList = Array.isArray(response?.data) ? response.data : []
+
+  recentVisits.value = historyList.map((record) => {
+    const tag = getRecentVisitTag(record)
+
+    return {
+      id: record.id,
+      name: buildRecentVisitName(record),
+      issue: buildRecentVisitIssue(record),
+      type: getRecentVisitType(tag),
+      tag,
+      time: formatRecentVisitTime(record.createdAt),
+      path: '/hemorrhage',
+      query: { recordId: record.id },
+    }
+  })
+}
+
+/**
+ * 加载首页总览数据。
+ * 该数据由后端基于脑出血检测历史记录实时聚合。
+ */
+const loadDashboardOverview = async () => {
+  const response = await getDashboardOverview()
+  welcomeName.value = response?.welcomeName || '医生'
+  pendingTaskCount.value = response?.pendingTaskCount || 0
+  statsData.value = Array.isArray(response?.stats) ? response.stats : []
+  riskList.value = Array.isArray(response?.riskList) ? response.riskList : []
+  highRiskCount.value = response?.highRiskCount || 0
+  activities.value = Array.isArray(response?.activities) ? response.activities : []
+
+  if (isAdminView.value) {
+    recentVisits.value = buildAdminRecentVisits(activities.value)
+  }
+}
+
+const handleRecentVisitClick = (item) => {
+  router.push({ path: item.path, query: item.query })
+}
+
+const handleQuickAccessHeaderClick = () => {
+  router.push(isAdminView.value ? '/admin/users' : '/issues')
+}
+
+/**
+ * 加载首页质控合格率趋势图数据。
+ */
+const loadDashboardTrend = async () => {
+  try {
+    const response = await getDashboardTrend(chartPeriod.value)
+    dashboardTrendData.value = normalizeDashboardTrendData(response)
+    await nextTick()
+
+    if (hasDashboardTrendData.value) {
+      initDashboardTrendChart(dashboardTrendData.value)
+      return
+    }
+
+    dashboardTrendChart?.dispose()
+    dashboardTrendChart = null
+  } catch (error) {
+    console.error('加载首页质控运行趋势失败', error)
+    dashboardTrendData.value = createDefaultTrendData()
+    dashboardTrendChart?.dispose()
+    dashboardTrendChart = null
+  }
+}
+
+/**
+ * 初始化首页趋势图。
+ *
+ * @param {Object} data - 趋势图数据
+ */
+const initDashboardTrendChart = (data) => {
+  if (!dashboardTrendChartRef.value) {
+    return
+  }
+
+  if (!dashboardTrendChart) {
+    dashboardTrendChart = echarts.init(dashboardTrendChartRef.value)
+  }
+
+  dashboardTrendChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(255, 255, 255, 0.96)',
+      borderColor: '#ebeef5',
+      borderWidth: 1,
+      textStyle: { color: '#303133' },
+      formatter: (params) => {
+        const rows = params.map((item) => {
+          const unit = item.seriesName.includes('率') ? '%' : item.seriesName.includes('评分') ? '分' : '例'
+          return `${item.marker}${item.seriesName}：${item.value}${unit}`
+        })
+        return `${params?.[0]?.axisValue || '--'}<br/>${rows.join('<br/>')}`
+      },
+    },
+    legend: {
+      top: 0,
+      itemWidth: 12,
+      itemHeight: 8,
+      textStyle: { color: '#606266', fontSize: 12 },
+      data: ['检查量', '异常量', '合格率', '平均评分'],
+    },
+    grid: { left: '3%', right: '4%', bottom: '3%', top: 54, containLabel: true },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: data?.dates || [],
+      axisLine: { lineStyle: { color: '#dcdfe6' } },
+      axisLabel: { color: '#909399' },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        min: 0,
+        max: 100,
+        axisLabel: { formatter: '{value}%', color: '#909399' },
+        splitLine: { lineStyle: { type: 'dashed', color: '#ebeef5' } },
+      },
+      {
+        type: 'value',
+        axisLabel: { formatter: '{value}例', color: '#909399' },
+        splitLine: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: '检查量',
+        type: 'bar',
+        yAxisIndex: 1,
+        barMaxWidth: 18,
+        itemStyle: {
+          color: '#dbeafe',
+          borderRadius: [4, 4, 0, 0],
+        },
+        emphasis: { focus: 'series' },
+        data: data?.totalCounts || [],
+      },
+      {
+        name: '异常量',
+        type: 'bar',
+        yAxisIndex: 1,
+        barMaxWidth: 14,
+        itemStyle: {
+          color: '#fca5a5',
+          borderRadius: [4, 4, 0, 0],
+        },
+        emphasis: { focus: 'series' },
+        data: data?.abnormalCounts || [],
+      },
+      {
+        name: '合格率',
+        type: 'line',
+        smooth: true,
+        yAxisIndex: 0,
+        symbol: 'circle',
+        symbolSize: 8,
+        data: data?.passRates || [],
+        itemStyle: { color: '#67C23A' },
+        lineStyle: { width: 3, color: '#67C23A' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(103,194,58,0.28)' },
+            { offset: 1, color: 'rgba(103,194,58,0.03)' },
+          ]),
+        },
+      },
+      {
+        name: '平均评分',
+        type: 'line',
+        smooth: true,
+        yAxisIndex: 0,
+        symbol: 'circle',
+        symbolSize: 7,
+        data: data?.averageScores || [],
+        itemStyle: { color: '#409EFF' },
+        lineStyle: { width: 2, color: '#409EFF', type: 'dashed' },
+      },
+    ],
+  })
+}
+
+/**
+ * 响应窗口尺寸变化，保持图表自适应。
+ */
+const handleResize = () => {
+  dashboardTrendChart?.resize()
+}
+
+/**
+ * 页面挂载时加载最新历史记录。
+ */
+onMounted(async () => {
+  const pendingTasks = [loadDashboardOverview(), loadDashboardTrend()]
+
+  if (!isAdminView.value) {
+    pendingTasks.push(loadRecentVisits())
+  }
+
+  await Promise.allSettled(pendingTasks)
+  window.addEventListener('resize', handleResize)
+})
+
+watch(chartPeriod, () => {
+  loadDashboardTrend()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+  dashboardTrendChart?.dispose()
+  dashboardTrendChart = null
+})
 </script>
 
 <style scoped>
@@ -493,10 +1043,29 @@ const recentVisits = [
 
 .recent-text {
   flex: 1;
-  white-space: nowrap;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  margin-right: 8px;
+  min-width: 0;
+}
+
+.recent-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-right: 8px;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+
+.recent-issue {
+  color: #f56c6c;
+  margin-left: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.recent-issue-normal {
+  color: #909399;
 }
 
 .recent-time {
@@ -610,13 +1179,102 @@ const recentVisits = [
   color: #909399;
 }
 
-/* 图表占位 */
-.chart-placeholder {
-  height: 240px;
+/* 图表区域 */
+.trend-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.trend-summary-item {
+  background: #f8fafc;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  padding: 14px 16px;
+  transition: all 0.3s;
+}
+
+.trend-summary-item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+}
+
+.trend-summary-item.is-primary {
+  background: linear-gradient(180deg, rgba(64, 158, 255, 0.08), rgba(64, 158, 255, 0.02));
+}
+
+.trend-summary-item.is-success {
+  background: linear-gradient(180deg, rgba(103, 194, 58, 0.10), rgba(103, 194, 58, 0.03));
+}
+
+.trend-summary-item.is-danger {
+  background: linear-gradient(180deg, rgba(245, 108, 108, 0.10), rgba(245, 108, 108, 0.03));
+}
+
+.trend-summary-item.is-warning {
+  background: linear-gradient(180deg, rgba(230, 162, 60, 0.10), rgba(230, 162, 60, 0.03));
+}
+
+.trend-summary-label {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 6px;
+}
+
+.trend-summary-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #303133;
+  line-height: 1.2;
+}
+
+.trend-summary-unit {
+  font-size: 12px;
+  color: #909399;
+  margin-left: 2px;
+}
+
+.trend-summary-extra {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.4;
+}
+
+.trend-chart {
+  height: 290px;
+  background: #fcfcfc;
+  border-radius: 8px;
+}
+
+.trend-empty-state {
+  min-height: 290px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fcfcfc;
-  border-radius: 4px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f7f9fc 100%);
+  border-radius: 8px;
+  border: 1px dashed #dcdfe6;
+}
+
+.trend-empty-desc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.trend-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.trend-empty-text {
+  max-width: 420px;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.6;
 }
 </style>

@@ -1,15 +1,6 @@
 <template>
-  <!-- 
-    @file auth/Register.vue
-    @description 用户注册页面
-    提供新用户注册功能，包含表单验证和 API 提交。
-  -->
   <div class="auth-layout">
     <div class="auth-container">
-      <!-- 
-        @section 页面头部
-        显示平台标题和副标题
-      -->
       <div class="auth-header">
         <h1 class="platform-title">医学影像质控平台</h1>
         <p class="subtitle">Medical Imaging Quality Control System</p>
@@ -18,20 +9,21 @@
       <el-card class="auth-card" shadow="hover">
         <div class="card-header">
           <h2>用户注册</h2>
+          <p class="card-hint">先选择身份，再完善账号与机构信息</p>
         </div>
 
-        <!-- 
-          @section 注册表单
-          功能: 收集用户注册信息
-          字段: 用户名, 真实姓名, 医院, 科室, 邮箱, 密码, 确认密码
-        -->
         <el-form
+          ref="registerFormRef"
           :model="form"
           :rules="rules"
-          ref="registerFormRef"
           label-position="top"
           @submit.prevent="handleRegister"
         >
+          <el-form-item label="注册身份">
+            <RoleSelector v-model="form.role" :options="ROLE_OPTIONS" />
+            <div class="role-guide">{{ roleGuide }}</div>
+          </el-form-item>
+
           <el-form-item label="用户名" prop="username">
             <el-input
               v-model="form.username"
@@ -42,9 +34,9 @@
             />
           </el-form-item>
 
-          <el-form-item label="真实姓名" prop="full_name">
+          <el-form-item label="真实姓名" prop="fullName">
             <el-input
-              v-model="form.full_name"
+              v-model="form.fullName"
               placeholder="请输入您的真实姓名"
               size="large"
               clearable
@@ -62,10 +54,10 @@
             />
           </el-form-item>
 
-          <el-form-item label="科室" prop="department">
+          <el-form-item :label="departmentLabel" prop="department">
             <el-input
               v-model="form.department"
-              placeholder="例如：放射科、影像中心"
+              :placeholder="departmentPlaceholder"
               size="large"
               clearable
               prefix-icon="Suitcase"
@@ -86,16 +78,16 @@
             <el-input
               v-model="form.password"
               type="password"
-              placeholder="至少6位，包含字母和数字更安全"
+              placeholder="至少6位，建议包含字母和数字"
               size="large"
               show-password
               prefix-icon="Lock"
             />
           </el-form-item>
 
-          <el-form-item label="确认密码" prop="confirm_password">
+          <el-form-item label="确认密码" prop="confirmPassword">
             <el-input
-              v-model="form.confirm_password"
+              v-model="form.confirmPassword"
               type="password"
               placeholder="请再次输入密码"
               size="large"
@@ -108,7 +100,7 @@
             <el-button
               type="primary"
               size="large"
-              style="width: 100%;"
+              class="submit-btn"
               :loading="loading"
               native-type="submit"
             >
@@ -123,94 +115,100 @@
         </el-form>
       </el-card>
 
-      <div class="auth-footer">
-        © 2026 医学影像质控平台 · 保障医学影像质量
-      </div>
+      <div class="auth-footer">© 2026 医学影像质控平台 · 保障医学影像质量</div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Edit, OfficeBuilding, Suitcase, Message, Lock } from '@element-plus/icons-vue'
-import request from '@/utils/request'
+import { register } from '@/api/auth'
+import RoleSelector from '@/components/auth/RoleSelector.vue'
+import { DEFAULT_ROLE, ROLE_OPTIONS } from '@/utils/auth'
 
 const router = useRouter()
 const registerFormRef = ref(null)
 const loading = ref(false)
 
-/**
- * @description 表单数据模型
- */
 const form = ref({
+  role: DEFAULT_ROLE,
   username: '',
-  full_name: '',
+  fullName: '',
   hospital: '',
   department: '',
   email: '',
   password: '',
-  confirm_password: '' // 仅用于前端验证，不提交给后端
+  confirmPassword: '',
 })
 
-/**
- * @description 表单验证规则
- * 包含必填校验、邮箱格式校验、密码长度校验及两次密码一致性校验
- */
+const isDoctorRole = computed(() => form.value.role === 'doctor')
+
+const roleGuide = computed(() => {
+  return isDoctorRole.value
+    ? '医生账号用于执行影像质控、病例审核与结果确认。'
+    : '管理员账号用于管理账号、流程配置与系统运营。'
+})
+
+const departmentLabel = computed(() => (isDoctorRole.value ? '科室' : '管理单元（选填）'))
+
+const departmentPlaceholder = computed(() => {
+  return isDoctorRole.value ? '例如：放射科、影像中心' : '例如：医务处、质控办'
+})
+
+const validateDepartment = (_, value) => {
+  if (isDoctorRole.value && !value?.trim()) {
+    return Promise.reject('医生身份需要填写科室')
+  }
+
+  return Promise.resolve()
+}
+
+const validateConfirmPassword = (_, value) => {
+  if (value !== form.value.password) {
+    return Promise.reject('两次输入的密码不一致')
+  }
+
+  return Promise.resolve()
+}
+
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
-  full_name: [{ required: true, message: '请输入真实姓名', trigger: 'blur' }],
+  fullName: [{ required: true, message: '请输入真实姓名', trigger: 'blur' }],
   hospital: [{ required: true, message: '请输入医院名称', trigger: 'blur' }],
-  department: [{ required: true, message: '请输入科室', trigger: 'blur' }],
+  department: [{ validator: validateDepartment, trigger: 'blur' }],
   email: [
     { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '邮箱格式不正确', trigger: 'blur' }
+    { type: 'email', message: '邮箱格式不正确', trigger: 'blur' },
   ],
   password: [
     { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, message: '密码至少6位', trigger: 'blur' }
+    { min: 6, message: '密码至少6位', trigger: 'blur' },
   ],
-  confirm_password: [
+  confirmPassword: [
     { required: true, message: '请再次输入密码', trigger: 'blur' },
-    {
-      validator: (rule, value) => {
-        if (value !== form.value.password) {
-          return Promise.reject('两次输入的密码不一致')
-        }
-        return Promise.resolve()
-      },
-      trigger: 'blur'
-    }
-  ]
+    { validator: validateConfirmPassword, trigger: 'blur' },
+  ],
 }
 
-/**
- * @function handleRegister
- * @description 处理注册请求
- * 
- * 逻辑:
- * 1. 验证表单数据
- * 2. 调用 /auth/register API 提交注册信息
- * 3. 成功后跳转至登录页
- * 
- * 对接API:
- * - POST /auth/register
- */
 const handleRegister = async () => {
   await registerFormRef.value.validate()
   loading.value = true
+
   try {
-    await request.post('/auth/register', {
+    await register({
       username: form.value.username,
-      full_name: form.value.full_name,
+      role: form.value.role,
+      fullName: form.value.fullName,
       hospital: form.value.hospital,
       department: form.value.department,
       email: form.value.email,
-      password: form.value.password
+      password: form.value.password,
     })
+
     ElMessage.success('注册成功！请登录')
-    router.push('/login')
+    router.push({ path: '/login', query: { role: form.value.role } })
   } catch (error) {
     const detail = error.response?.data?.detail || '注册失败'
     ElMessage.error(detail)
@@ -221,10 +219,6 @@ const handleRegister = async () => {
 </script>
 
 <style scoped>
-/* 
-  @section 样式定义
-  包含注册页面的布局、容器、表单卡片及底部版权信息的样式
-*/
 .auth-layout {
   display: flex;
   align-items: center;
@@ -236,7 +230,7 @@ const handleRegister = async () => {
 
 .auth-container {
   width: 100%;
-  max-width: 420px;
+  max-width: 460px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -263,26 +257,35 @@ const handleRegister = async () => {
 
 .auth-card {
   width: 100%;
-  border-radius: 12px;
+  border-radius: 16px;
   border: 1px solid #ebeef5;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.08);
   overflow: hidden;
 }
 
 .card-header {
-  padding: 24px 24px 16px;
+  padding: 24px 24px 12px;
   text-align: center;
 }
 
 .card-header h2 {
-  font-size: 20px;
-  font-weight: 600;
-  color: #303133;
   margin: 0;
+  font-size: 22px;
+  color: #303133;
+}
+
+.card-hint {
+  margin: 10px 0 0;
+  color: #7a8599;
+  font-size: 13px;
+}
+
+:deep(.el-form) {
+  padding: 0 24px 24px;
 }
 
 :deep(.el-form-item) {
-  margin-bottom: 16px; /* ✅ 从 20px 改为 16px，更紧凑 */
+  margin-bottom: 16px;
 }
 
 :deep(.el-form-item__label) {
@@ -293,14 +296,20 @@ const handleRegister = async () => {
 }
 
 :deep(.el-input__wrapper) {
-  border-radius: 8px !important;
-  border: 1px solid #dcdfe6;
+  border-radius: 10px !important;
 }
 
-:deep(.el-input__inner) {
-  text-align: left !important;
-  padding: 10px 16px;
-  font-size: 14px;
+.role-guide {
+  margin-top: 10px;
+  color: #6b778c;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.submit-btn {
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
 }
 
 .footer-links {

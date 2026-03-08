@@ -1,6 +1,7 @@
 package com.medical.qc.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.io.Serializable;
@@ -11,6 +12,7 @@ import java.time.LocalDateTime;
  */
 @TableName("hemorrhage_records")
 public class HemorrhageRecord implements Serializable {
+
     private static final long serialVersionUID = 1L;
 
     @TableId(value = "id", type = IdType.AUTO)
@@ -20,6 +22,7 @@ public class HemorrhageRecord implements Serializable {
     private String examId;
     private String imagePath;
     private String prediction;
+    private String qcStatus;
     private String confidenceLevel;
     private Float hemorrhageProbability;
     private Float noHemorrhageProbability;
@@ -33,6 +36,13 @@ public class HemorrhageRecord implements Serializable {
     private String device;
     private String rawResultJson;
     private LocalDateTime updatedAt;
+
+    /**
+     * 首页与历史列表使用的主异常项展示字段。
+     * 该字段为运行期派生数据，不落库。
+     */
+    @TableField(exist = false)
+    private String primaryIssue;
 
     public Long getId() {
         return id;
@@ -80,6 +90,14 @@ public class HemorrhageRecord implements Serializable {
 
     public void setPrediction(String prediction) {
         this.prediction = prediction;
+    }
+
+    public String getQcStatus() {
+        return qcStatus;
+    }
+
+    public void setQcStatus(String qcStatus) {
+        this.qcStatus = qcStatus;
     }
 
     public String getConfidenceLevel() {
@@ -184,5 +202,13 @@ public class HemorrhageRecord implements Serializable {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public String getPrimaryIssue() {
+        return primaryIssue;
+    }
+
+    public void setPrimaryIssue(String primaryIssue) {
+        this.primaryIssue = primaryIssue;
     }
 }

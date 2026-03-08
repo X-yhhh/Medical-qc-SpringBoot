@@ -1,27 +1,32 @@
-<!-- src/views/auth/Login.vue -->
-<template>
+﻿<template>
   <div class="auth-layout">
     <div class="auth-container">
-      <!-- Logo / 标题区域 -->
       <div class="auth-header">
         <h1 class="platform-title">医学影像质控平台</h1>
         <p class="subtitle">Medical Imaging Quality Control System</p>
       </div>
 
-      <!-- 登录卡片 -->
       <el-card class="auth-card" shadow="hover">
         <div class="card-header">
-          <h2>用户登录</h2>
+          <h2>{{ cardTitle }}</h2>
+          <p class="card-hint">{{ cardHint }}</p>
         </div>
 
-        <!-- 登录表单: 用户名/密码验证 -->
+        <div v-if="showStatusTip" class="status-tip">
+          {{ statusTipText }}
+        </div>
+
         <el-form
+          ref="loginFormRef"
           :model="form"
           :rules="rules"
-          ref="loginFormRef"
           label-position="top"
           @submit.prevent="handleLogin"
         >
+          <el-form-item label="登录身份">
+            <RoleSelector v-model="form.role" :options="ROLE_OPTIONS" />
+          </el-form-item>
+
           <el-form-item label="用户名或邮箱" prop="username">
             <el-input
               v-model="form.username"
@@ -47,15 +52,14 @@
             <el-button
               type="primary"
               size="large"
-              style="width: 100%"
+              class="submit-btn"
               :loading="loading"
               native-type="submit"
             >
-              登录
+              登录系统
             </el-button>
           </el-form-item>
 
-          <!-- 底部链接 -->
           <div class="footer-links">
             <span>还没有账号？</span>
             <router-link to="/register" class="link">立即注册</router-link>
@@ -69,75 +73,92 @@
 </template>
 
 <script setup>
-/**
- * @file auth/Login.vue
- * @description 用户登录页面
- * 提供用户名密码登录功能，处理 JWT Token 存储及用户状态管理。
- *
- * 对接API:
- * - login: 调用后端 /api/auth/login 接口获取 access_token
- */
-
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
 import { login } from '@/api/auth'
+import RoleSelector from '@/components/auth/RoleSelector.vue'
+import { DEFAULT_ROLE, ROLE_OPTIONS, isSupportedRole, saveUserInfo } from '@/utils/auth'
 
 const router = useRouter()
+const route = useRoute()
 const loginFormRef = ref(null)
 const loading = ref(false)
 
-// 表单数据模型
+const resolveRole = (role) => (isSupportedRole(role) ? role : DEFAULT_ROLE)
+
 const form = ref({
   username: '',
   password: '',
+  role: resolveRole(route.query.role),
 })
 
-// 表单验证规则
 const rules = {
   username: [{ required: true, message: '请输入用户名或邮箱', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
-/**
- * 处理登录请求
- * 1. 验证表单
- * 2. 调用 login API
- * 3. 存储 Token 和用户信息到 sessionStorage
- * 4. 跳转至首页
- */
+const pageMode = computed(() => route.query.mode)
+const isSwitchMode = computed(() => pageMode.value === 'switch')
+const isExpiredMode = computed(() => pageMode.value === 'expired')
+const isPermissionUpdatedMode = computed(() => pageMode.value === 'permission-updated')
+
+const cardTitle = computed(() => {
+  if (isPermissionUpdatedMode.value) {
+    return '权限已更新'
+  }
+
+  return isSwitchMode.value ? '切换账号' : '用户登录'
+})
+
+const cardHint = computed(() => {
+  if (isPermissionUpdatedMode.value) {
+    return '账号权限或状态已调整，请重新选择身份并登录'
+  }
+
+  if (isSwitchMode.value) {
+    return '当前账号已退出，请选择新的身份并重新登录'
+  }
+
+  return '请选择身份并使用用户名或邮箱登录'
+})
+
+const showStatusTip = computed(() => isSwitchMode.value || isExpiredMode.value || isPermissionUpdatedMode.value)
+
+const redirectPath = computed(() => {
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  return redirect.startsWith('/') ? redirect : '/'
+})
+
+const statusTipText = computed(() => {
+  if (isPermissionUpdatedMode.value) {
+    return '检测到账号权限或状态发生变化，原登录会话已失效，请重新登录。'
+  }
+
+  if (isSwitchMode.value) {
+    return '已进入切换用户模式，当前会话已清理。'
+  }
+
+  return '登录状态已失效，请重新验证身份。'
+})
+
 const handleLogin = async () => {
   await loginFormRef.value.validate()
   loading.value = true
+
   try {
-    // 调用登录接口
-    // Session-based: No token returned, Cookie set automatically
-    const res = await login(form.value)
-    console.log('🚀 登录响应:', res)
-
+    const response = await login(form.value)
+    saveUserInfo(response)
     ElMessage.success('登录成功！')
-
-    // 存储用户信息
-    sessionStorage.setItem('user_info', JSON.stringify(res))
-
-    router.push('/')
+    router.push(redirectPath.value)
   } catch (error) {
-    console.error('❌ 登录失败:', error)
-
-    // 智能错误提示处理
     let errorMsg = '登录失败，请稍后重试'
 
-    // 优先使用后端返回的 detail
     if (error.response?.data?.detail) {
       errorMsg = error.response.data.detail
-    }
-    // 其次用网络错误（如超时）
-    else if (error.request) {
+    } else if (error.request) {
       errorMsg = '网络连接失败，请检查网络'
-    }
-    // 最后用 JS 错误
-    else if (error.message) {
+    } else if (error.message) {
       errorMsg = error.message
     }
 
@@ -149,7 +170,6 @@ const handleLogin = async () => {
 </script>
 
 <style scoped>
-/* 登录页布局样式 */
 .auth-layout {
   display: flex;
   align-items: center;
@@ -161,7 +181,7 @@ const handleLogin = async () => {
 
 .auth-container {
   width: 100%;
-  max-width: 420px;
+  max-width: 460px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -188,31 +208,45 @@ const handleLogin = async () => {
 
 .auth-card {
   width: 100%;
-  border-radius: 12px;
+  border-radius: 16px;
   border: 1px solid #ebeef5;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.08);
   overflow: hidden;
 }
 
 .card-header {
-  padding: 24px 24px 16px;
+  padding: 24px 24px 12px;
   text-align: center;
 }
 
 .card-header h2 {
-  font-size: 20px;
-  font-weight: 600;
-  color: #303133;
   margin: 0;
-  display: inline-block;
+  font-size: 22px;
+  color: #303133;
+}
+
+.card-hint {
+  margin: 10px 0 0;
+  color: #7a8599;
+  font-size: 13px;
+}
+
+.status-tip {
+  margin: 0 24px 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(64, 158, 255, 0.08);
+  border: 1px solid rgba(64, 158, 255, 0.16);
+  color: #2f6fb2;
+  font-size: 13px;
 }
 
 :deep(.el-form) {
-  padding-top: 8px;
+  padding: 0 24px 24px;
 }
 
 :deep(.el-form-item) {
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 :deep(.el-form-item__label) {
@@ -223,12 +257,13 @@ const handleLogin = async () => {
 }
 
 :deep(.el-input__wrapper) {
-  border: 1px solid #dcdfe6;
+  border-radius: 10px !important;
 }
 
-:deep(.el-input__inner) {
-  padding: 10px 16px;
-  font-size: 14px;
+.submit-btn {
+  width: 100%;
+  height: 44px;
+  border-radius: 10px;
 }
 
 .footer-links {
@@ -258,3 +293,5 @@ const handleLogin = async () => {
   text-align: center;
 }
 </style>
+
+

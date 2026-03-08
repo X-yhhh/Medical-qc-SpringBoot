@@ -1,4 +1,4 @@
-// src/api/summary.js
+﻿// src/api/summary.js
 // ----------------------------------------------------------------------------------
 // 异常汇总前端 API (Summary API)
 // 作用：获取“异常汇总”页面的各类统计数据。
@@ -40,5 +40,23 @@ export const getRecentIssues = (params) => {
     url: '/summary/recent',
     method: 'get',
     params
+  })
+}
+
+// 更新异常工单状态
+// 参数：issueId, { status, remark }
+export const updateIssueStatus = (issueId, data) => {
+  return request({
+    url: `/summary/issues/${issueId}/status`,
+    method: 'patch',
+    data
+  })
+}
+
+// 获取异常记录详情
+export const getIssueDetail = (issueId) => {
+  return request({
+    url: `/summary/issues/${issueId}`,
+    method: 'get'
   })
 }

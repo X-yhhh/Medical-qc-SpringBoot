@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.medical.qc.entity.HemorrhageRecord;
 import com.medical.qc.entity.User;
 import com.medical.qc.mapper.HemorrhageRecordMapper;
+import com.medical.qc.service.IssueService;
 import com.medical.qc.service.QualityService;
+import com.medical.qc.support.HemorrhageIssueSupport;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +17,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.net.URI;
+import java.time.LocalDateTime;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -30,6 +33,9 @@ public class QualityServiceImpl implements QualityService {
     @Autowired
     private HemorrhageRecordMapper hemorrhageRecordMapper;
 
+    @Autowired
+    private IssueService issueService;
+
     @Value("${python.model_server.url:ws://localhost:8765}")
     private String modelServerUrl;
 
@@ -37,10 +43,59 @@ public class QualityServiceImpl implements QualityService {
 
     @Override
     public List<HemorrhageRecord> getHistory(Long userId) {
-        QueryWrapper<HemorrhageRecord> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("user_id", userId);
-        queryWrapper.orderByDesc("created_at");
-        return hemorrhageRecordMapper.selectList(queryWrapper);
+        return getHistory(userId, null);
+    }
+
+    /**
+     * 获取用户脑出血检测历史记录。
+     * limit 为空时返回全部记录，否则仅返回最近 N 条。
+     *
+     * @param userId 用户 ID
+     * @param limit 返回数量上限
+     * @return 历史记录列表
+     */
+    @Override
+    public List<HemorrhageRecord> getHistory(Long userId, Integer limit) {
+        List<HemorrhageRecord> history;
+        if (userId == null) {
+            QueryWrapper<HemorrhageRecord> queryWrapper = new QueryWrapper<HemorrhageRecord>()
+                    .orderByDesc("created_at");
+
+            if (limit != null && limit > 0) {
+                queryWrapper.last("LIMIT " + normalizeHistoryLimit(limit));
+            }
+
+            history = hemorrhageRecordMapper.selectList(queryWrapper);
+        } else if (limit == null || limit <= 0) {
+            history = hemorrhageRecordMapper.findByUserId(userId);
+        } else {
+            history = hemorrhageRecordMapper.findRecentByUserId(userId, normalizeHistoryLimit(limit));
+        }
+
+        history.forEach(this::populatePrimaryIssue);
+        return history;
+    }
+
+    /**
+     * ???????????????????
+     *
+     * @param userId   ?? ID
+     * @param recordId ???? ID
+     * @return ??????
+     */
+    @Override
+    public HemorrhageRecord getHistoryRecord(Long userId, Long recordId) {
+        if (userId == null || recordId == null) {
+            return null;
+        }
+
+        HemorrhageRecord record = hemorrhageRecordMapper.selectOne(new QueryWrapper<HemorrhageRecord>()
+                .eq("user_id", userId)
+                .eq("id", recordId)
+                .last("LIMIT 1"));
+
+        populatePrimaryIssue(record);
+        return record;
     }
 
     /**
@@ -57,6 +112,8 @@ public class QualityServiceImpl implements QualityService {
     @Override
     public Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId)
             throws IOException {
+        validateHemorrhageFile(file);
+
         if (Files.notExists(rootLocation)) {
             Files.createDirectories(rootLocation);
         }
@@ -69,7 +126,7 @@ public class QualityServiceImpl implements QualityService {
         Map<String, Object> predictionResult = callPythonModelViaWebSocket(destinationFile.toString());
 
         if (predictionResult.containsKey("error")) {
-            throw new RuntimeException("AI Error: " + predictionResult.get("error"));
+            throw buildModelServiceException(String.valueOf(predictionResult.get("error")));
         }
 
         // Save to DB
@@ -78,11 +135,10 @@ public class QualityServiceImpl implements QualityService {
         record.setPatientName(patientName);
         record.setExamId(examId);
         record.setImagePath("uploads/" + filename);
-        record.setRawResultJson(new ObjectMapper().writeValueAsString(predictionResult));
 
         // Translate Prediction to Chinese (Front-end expectation)
-        String rawPrediction = (String) predictionResult.get("prediction");
-        String translatedPrediction = "Hemorrhage".equals(rawPrediction) ? "出血" : "未出血";
+        String rawPrediction = String.valueOf(predictionResult.get("prediction"));
+        String translatedPrediction = translatePrediction(rawPrediction);
 
         record.setPrediction(translatedPrediction);
         predictionResult.put("prediction", translatedPrediction); // Update map for immediate return
@@ -123,6 +179,12 @@ public class QualityServiceImpl implements QualityService {
             record.setDevice(String.valueOf(predictionResult.get("device")));
         }
 
+        populatePrimaryIssue(record);
+        String qcStatus = HemorrhageIssueSupport.resolveQcStatus(record);
+        record.setQcStatus(qcStatus);
+        predictionResult.put("primary_issue", record.getPrimaryIssue());
+        predictionResult.put("qc_status", qcStatus); // 供首页最近访问和历史列表直接复用
+
         // Append image meta and URL for frontend rendering
         try {
             BufferedImage img = ImageIO.read(destinationFile.toFile());
@@ -139,10 +201,126 @@ public class QualityServiceImpl implements QualityService {
         }
         predictionResult.put("image_url", "/uploads/" + filename);
 
+        // Exclude base64 preview from persisted raw result to keep DB payload compact.
+        Map<String, Object> persistedResult = new HashMap<>(predictionResult);
+        persistedResult.remove("image_base64");
+        record.setRawResultJson(new ObjectMapper().writeValueAsString(persistedResult));
+
+        record.setCreatedAt(LocalDateTime.now());
+        record.setUpdatedAt(record.getCreatedAt());
         hemorrhageRecordMapper.insert(record);
+
+        // 历史记录入库后立即同步异常工单，确保首页与异常汇总页实时读取数据库结果。
+        issueService.syncHemorrhageIssue(record);
+
+        // 返回数据库真实落库后的补充信息，便于前端严格按后端结果回显。
+        predictionResult.put("record_id", record.getId());
+        predictionResult.put("patient_name", record.getPatientName());
+        predictionResult.put("exam_id", record.getExamId());
+        predictionResult.put("created_at", record.getCreatedAt());
+        predictionResult.put("updated_at", record.getUpdatedAt());
+        predictionResult.put("device", record.getDevice());
 
         return predictionResult;
     }
+
+    /**
+     * 统一限制历史记录查询数量，避免首页等轻量场景拉取过多数据。
+     *
+     * @param limit 原始数量
+     * @return 清洗后的安全数量
+     */
+    private int normalizeHistoryLimit(Integer limit) {
+        return Math.max(1, Math.min(limit, 20));
+    }
+
+    /**
+     * 为脑出血历史记录补充首页展示所需的“主异常项”。
+     * 优先级按严重程度从高到低为：脑出血 > 中线偏移 > 脑室结构异常 > 未见明显异常。
+     *
+     * @param record 脑出血历史记录
+     */
+    private void populatePrimaryIssue(HemorrhageRecord record) {
+        if (record == null) {
+            return;
+        }
+
+        record.setPrimaryIssue(HemorrhageIssueSupport.resolvePrimaryIssue(record));
+        record.setQcStatus(HemorrhageIssueSupport.resolveQcStatus(record));
+    }
+
+
+    /**
+     * 校验当前脑出血检测上传文件是否满足后端模型支持范围。
+     *
+     * <p>当前 Python 模型仅支持常见位图图片，尚未接入 DICOM 解析链路，
+     * 因此前端若误传 .dcm 文件，需要在后端显式拦截并返回可读错误。</p>
+     *
+     * @param file 上传文件
+     */
+    private void validateHemorrhageFile(MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("请先上传待检测影像文件");
+        }
+
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null || originalFilename.isBlank()) {
+            throw new IllegalArgumentException("影像文件名不能为空");
+        }
+
+        String normalizedName = originalFilename.toLowerCase(Locale.ROOT);
+        if (!(normalizedName.endsWith(".png")
+                || normalizedName.endsWith(".jpg")
+                || normalizedName.endsWith(".jpeg")
+                || normalizedName.endsWith(".bmp"))) {
+            throw new IllegalArgumentException("当前脑出血模型仅支持 PNG/JPG/JPEG/BMP 图片，暂不支持 DICOM 文件");
+        }
+    }
+
+    /**
+     * 将模型原始英文判定统一转换为前端展示文案。
+     *
+     * @param rawPrediction 模型原始 prediction 字段
+     * @return 中文判定文案
+     */
+    private String translatePrediction(String rawPrediction) {
+        if (rawPrediction == null) {
+            return "未出血";
+        }
+
+        String normalizedPrediction = rawPrediction.trim();
+        if ("Hemorrhage".equalsIgnoreCase(normalizedPrediction) || "出血".equals(normalizedPrediction)) {
+            return "出血";
+        }
+
+        return "未出血";
+    }
+
+    /**
+     * 将模型服务错误转换为更准确的后端异常类型。
+     *
+     * @param errorMessage 模型服务返回的错误信息
+     * @return 业务异常
+     */
+    private RuntimeException buildModelServiceException(String errorMessage) {
+        String normalizedMessage = errorMessage == null ? "未知错误" : errorMessage.trim();
+        String lowerCaseMessage = normalizedMessage.toLowerCase(Locale.ROOT);
+
+        if (lowerCaseMessage.contains("failed to connect")
+                || lowerCaseMessage.contains("model not loaded")
+                || lowerCaseMessage.contains("timed out")
+                || lowerCaseMessage.contains("cuda")) {
+            return new IllegalStateException("脑出血模型服务暂不可用，请检查模型服务、GPU/CUDA 或稍后重试");
+        }
+
+        if (lowerCaseMessage.contains("cannot identify image file")
+                || lowerCaseMessage.contains("failed to read image")) {
+            return new IllegalArgumentException("上传文件不是可识别的图片，请使用 PNG/JPG/JPEG/BMP 格式");
+        }
+
+        return new IllegalStateException("脑出血模型推理失败：" + normalizedMessage);
+    }
+
 
     /**
      * 通过 WebSocket 调用 Python 模型服务进行推理。
@@ -269,3 +447,5 @@ public class QualityServiceImpl implements QualityService {
         return response;
     }
 }
+
+

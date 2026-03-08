@@ -146,6 +146,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="description" label="异常描述" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="issueType" label="主异常项" width="140" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.priority === '高' ? 'danger' : row.priority === '中' ? 'warning' : 'info'" effect="light">
+              {{ row.issueType || '未见明显异常' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="priority" label="优先级" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="getPriorityType(row.priority)" size="small" effect="dark">{{ row.priority || '普通' }}</el-tag>
@@ -179,8 +186,8 @@
           :page-sizes="[10, 20, 50]"
           layout="total, sizes, prev, pager, next, jumper"
           :total="total"
-          @size-change="handleSearch"
-          @current-change="handleSearch"
+          @size-change="handlePageSizeChange"
+          @current-change="handlePageChange"
           background
         />
       </div>
@@ -197,7 +204,7 @@
       destroy-on-close
       class="detail-dialog"
     >
-      <div v-if="currentRow" class="detail-content">
+      <div v-if="currentRow" v-loading="detailLoading" class="detail-content">
         <div class="detail-header">
           <div class="detail-status">
             <span class="label">当前状态：</span>
@@ -211,6 +218,8 @@
           <el-descriptions-item label="检查编号">{{ currentRow.examId }}</el-descriptions-item>
           <el-descriptions-item label="检查类型">{{ currentRow.type }}</el-descriptions-item>
           <el-descriptions-item label="发现时间">{{ currentRow.date }}</el-descriptions-item>
+          <el-descriptions-item label="主异常项">{{ currentRow.issueType || '未见明显异常' }}</el-descriptions-item>
+          <el-descriptions-item label="优先级">{{ currentRow.priority || '低' }}</el-descriptions-item>
         </el-descriptions>
 
         <div class="section-block">
@@ -218,12 +227,28 @@
           <div class="text-content">{{ currentRow.description }}</div>
         </div>
 
-        <div class="section-block" v-if="currentRow.imageUrl">
+        <div class="section-block" v-if="currentSourceDetail">
+          <h4 class="section-title">原始检测记录</h4>
+          <el-descriptions :column="2" border class="info-descriptions">
+            <el-descriptions-item label="记录ID">{{ currentSourceDetail.recordId }}</el-descriptions-item>
+            <el-descriptions-item label="质控结论">{{ currentSourceDetail.qcStatus || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="AI判定">{{ currentSourceDetail.prediction || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="出血风险">{{ formatProbability(currentSourceDetail.hemorrhageProbability) }}</el-descriptions-item>
+            <el-descriptions-item label="置信度">{{ currentSourceDetail.confidenceLevel || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="推理设备">{{ currentSourceDetail.device || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="检测时间">{{ currentSourceDetail.createdAt || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="检测模型">{{ currentSourceDetail.modelName || '--' }}</el-descriptions-item>
+            <el-descriptions-item label="中线偏移">{{ currentSourceDetail.midlineShift ? (currentSourceDetail.midlineDetail || '存在中线偏移') : '未见异常' }}</el-descriptions-item>
+            <el-descriptions-item label="脑室结构">{{ currentSourceDetail.ventricleIssue ? (currentSourceDetail.ventricleDetail || '脑室结构异常') : '未见异常' }}</el-descriptions-item>
+          </el-descriptions>
+        </div>
+
+        <div class="section-block" v-if="detailImageUrl">
           <h4 class="section-title">影像快照</h4>
           <div class="image-wrapper">
             <el-image
-              :src="currentRow.imageUrl"
-              :preview-src-list="[currentRow.imageUrl]"
+              :src="detailImageUrl"
+              :preview-src-list="detailImageUrl ? [detailImageUrl] : []"
               fit="contain"
               class="snapshot-image"
             >
@@ -249,8 +274,9 @@
       </div>
       <template #footer>
         <span class="dialog-footer">
+          <el-button v-if="currentRow?.sourceType === 'hemorrhage' && currentRow?.sourceRecordId" type="primary" plain @click="openSourceRecord">查看原始记录</el-button>
           <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" :disabled="currentRow?.status === '已解决'" @click="confirmResolve">
+          <el-button type="primary" :loading="submitting" :disabled="currentRow?.status === '已解决'" @click="confirmResolve">
             {{ currentRow?.status === '已解决' ? '已完成' : '确认处理' }}
           </el-button>
         </span>
@@ -273,6 +299,7 @@
  * - getRecentIssues: 获取分页列表数据
  */
 import { ref, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import * as echarts from 'echarts'
 import {
@@ -281,7 +308,7 @@ import {
   CaretTop, CaretBottom, Picture, FolderOpened
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSummaryStats, getIssueTrend, getIssueDistribution, getRecentIssues } from '@/api/summary'
+import { getSummaryStats, getIssueTrend, getIssueDistribution, getRecentIssues, getIssueDetail, updateIssueStatus } from '@/api/summary'
 
 // --- 基础状态 ---
 const updateTime = ref(dayjs().format('YYYY-MM-DD HH:mm'))
@@ -299,21 +326,30 @@ const statsData = ref({
   totalIssues: 0,
   todayIssues: 0,
   pendingIssues: 0,
-  resolutionRate: 0
+  resolutionRate: 0,
+  totalIssuesTrend: 0,
+  todayIssuesTrend: 0,
+  pendingIssuesTrend: 0,
+  resolutionRateTrend: 0
 })
 
 // 计算属性：生成卡片展示配置
 const statsCards = computed(() => [
-  { title: '总异常记录', value: statsData.value.totalIssues, unit: '条', icon: 'DataLine', trend: 5.2, type: 'primary' },
-  { title: '今日新增', value: statsData.value.todayIssues, unit: '条', icon: 'Warning', trend: 2.1, type: 'danger' },
-  { title: '待处理任务', value: statsData.value.pendingIssues, unit: '条', icon: 'Timer', trend: -12.5, type: 'warning' },
-  { title: '处理解决率', value: statsData.value.resolutionRate, unit: '%', icon: 'CircleCheck', trend: 1.5, type: 'success' },
+  { title: '总异常记录', value: statsData.value.totalIssues, unit: '条', icon: 'DataLine', trend: statsData.value.totalIssuesTrend, type: 'primary' },
+  { title: '今日新增', value: statsData.value.todayIssues, unit: '条', icon: 'Warning', trend: statsData.value.todayIssuesTrend, type: 'danger' },
+  { title: '待处理任务', value: statsData.value.pendingIssues, unit: '条', icon: 'Timer', trend: statsData.value.pendingIssuesTrend, type: 'warning' },
+  { title: '处理解决率', value: statsData.value.resolutionRate, unit: '%', icon: 'CircleCheck', trend: statsData.value.resolutionRateTrend, type: 'success' },
 ])
+
+const currentSourceDetail = computed(() => currentRow.value?.sourceDetail || null)
+const detailImageUrl = computed(() => currentSourceDetail.value?.imageUrl || currentRow.value?.imageUrl || '')
 
 // --- 弹窗相关状态 ---
 const dialogVisible = ref(false)
 const currentRow = ref(null)
 const resolveNote = ref('')
+const submitting = ref(false)
+const detailLoading = ref(false)
 
 // --- ECharts 实例 ---
 const trendChartRef = ref(null)
@@ -344,6 +380,7 @@ const loadAllData = async () => {
     fetchDistribution(),
     fetchList()
   ])
+  updateTime.value = dayjs().format('YYYY-MM-DD HH:mm')
 }
 
 /**
@@ -405,17 +442,30 @@ const fetchList = async () => {
       status: filterStatus.value
     })
 
-    // 兼容不同的后端返回格式
     if (res && Array.isArray(res.items)) {
+      const totalPages = Number(res.pages || 0)
+      if (totalPages > 0 && currentPage.value > totalPages) {
+        currentPage.value = totalPages
+        await fetchList()
+        return
+      }
+
       tableData.value = res.items
-      total.value = res.total || res.items.length
-    } else if (Array.isArray(res)) {
+      total.value = Number(res.total || res.items.length)
+      currentPage.value = Number(res.page || currentPage.value)
+      updateTime.value = dayjs().format('YYYY-MM-DD HH:mm')
+      return
+    }
+
+    if (Array.isArray(res)) {
       tableData.value = res
       total.value = res.length
-    } else {
-      tableData.value = []
-      total.value = 0
+      updateTime.value = dayjs().format('YYYY-MM-DD HH:mm')
+      return
     }
+
+    tableData.value = []
+    total.value = 0
   } catch (error) {
     console.error('获取列表失败', error)
     ElMessage.error('获取数据列表失败')
@@ -435,11 +485,72 @@ const handleSearch = () => {
 }
 
 /**
+ * 处理分页页码变化。
+ * 切页时不能重置回第一页，否则会导致分页看起来“失效”。
+ *
+ * @param {number} page - 目标页码
+ */
+const handlePageChange = (page) => {
+  currentPage.value = page
+  fetchList()
+}
+
+/**
+ * 处理每页条数变化。
+ * 修改分页大小后回到第一页，避免当前页超出新分页范围。
+ *
+ * @param {number} size - 每页条数
+ */
+const handlePageSizeChange = (size) => {
+  pageSize.value = size
+  currentPage.value = 1
+  fetchList()
+}
+
+/**
  * 导出数据
  */
-const handleExport = () => {
-  ElMessage.success('正在导出数据，请稍候...')
-  // 实际项目中这里会调用导出API
+const handleExport = async () => {
+  try {
+    const res = await getRecentIssues({
+      page: 1,
+      limit: Math.max(total.value || 0, pageSize.value),
+      query: searchQuery.value,
+      status: filterStatus.value
+    })
+
+    const exportRows = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : [])
+    if (!exportRows.length) {
+      ElMessage.warning('暂无可导出的异常记录')
+      return
+    }
+
+    const headers = ['异常ID', '发现时间', '患者姓名', '检查编号', '检查类型', '主异常项', '异常描述', '优先级', '状态']
+    const csvRows = exportRows.map(row => [
+      row.id,
+      row.date,
+      row.patientName,
+      row.examId,
+      row.type,
+      row.issueType,
+      row.description,
+      row.priority,
+      row.status,
+    ].map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))
+
+    const csvContent = ['\uFEFF' + headers.join(','), ...csvRows].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `异常汇总_${dayjs().format('YYYYMMDD_HHmmss')}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch (error) {
+    console.error('导出异常记录失败', error)
+    ElMessage.error('导出失败，请稍后重试')
+  }
 }
 
 // --- 图表初始化逻辑 ---
@@ -458,7 +569,7 @@ const initTrendChart = (data) => {
     xAxis: {
       type: 'category',
       boundaryGap: false,
-      data: data?.dates || ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
+      data: Array.isArray(data?.dates) ? data.dates : [],
       axisLine: { lineStyle: { color: '#909399' } }
     },
     yAxis: {
@@ -471,7 +582,7 @@ const initTrendChart = (data) => {
       name: '异常数量',
       type: 'line',
       smooth: true,
-      data: data?.values || [5, 12, 8, 15, 10, 7, 9],
+      data: Array.isArray(data?.values) ? data.values : [],
       itemStyle: { color: '#409EFF' },
       areaStyle: {
         color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -507,12 +618,7 @@ const initPieChart = (data) => {
         borderWidth: 2
       },
       label: { show: false },
-      data: data || [
-        { value: 1048, name: '伪影' },
-        { value: 735, name: '体位不正' },
-        { value: 580, name: '参数错误' },
-        { value: 484, name: '其他' }
-      ]
+      data: Array.isArray(data) ? data : []
     }]
   }
   pieChart.setOption(option)
@@ -539,41 +645,97 @@ const getPriorityType = (p) => {
 }
 
 /**
+ * 格式化概率展示。
+ *
+ * @param {number|string|null} probability - 概率值（0-1）
+ * @returns {string} 百分比文本
+ */
+const formatProbability = (probability) => {
+  const numericValue = Number(probability)
+  if (!Number.isFinite(numericValue)) {
+    return '--'
+  }
+
+  return `${(numericValue * 100).toFixed(1)}%`
+}
+
+/**
+ * 打开异常工单详情，并回源查询对应的原始检测记录。
+ *
+ * @param {Object} row - 异常工单摘要
+ */
+const openIssueDetail = async (row) => {
+  currentRow.value = { ...row }
+  resolveNote.value = row.remark || ''
+  dialogVisible.value = true
+  detailLoading.value = true
+
+  try {
+    const detail = await getIssueDetail(row.id)
+    currentRow.value = { ...currentRow.value, ...detail }
+    resolveNote.value = detail?.remark || row.remark || ''
+  } catch (error) {
+    console.error('获取异常工单详情失败', error)
+    ElMessage.error('获取异常详情失败')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+/**
  * 查看详情
  */
 const handleView = (row) => {
-  currentRow.value = { ...row }
-  resolveNote.value = ''
-  dialogVisible.value = true
+  openIssueDetail(row)
 }
 
 /**
  * 打开处理弹窗
  */
 const handleResolve = (row) => {
-  currentRow.value = { ...row }
-  resolveNote.value = ''
-  dialogVisible.value = true
+  openIssueDetail(row)
+}
+
+/**
+ * 跳转到对应的出血检测原始记录页面。
+ */
+const openSourceRecord = () => {
+  if (!currentRow.value?.sourceRecordId) {
+    return
+  }
+
+  dialogVisible.value = false
+  router.push({ path: '/hemorrhage', query: { recordId: currentRow.value.sourceRecordId } })
 }
 
 /**
  * 确认处理
  * 提交处理备注并更新状态
  */
-const confirmResolve = () => {
+const confirmResolve = async () => {
   if (!resolveNote.value && currentRow.value.status !== '已解决') {
     ElMessage.warning('请填写处理备注')
     return
   }
 
-  // 模拟提交
-  ElMessage.success('处理成功')
-  dialogVisible.value = false
+  submitting.value = true
+  try {
+    await updateIssueStatus(currentRow.value.id, {
+      status: '已解决',
+      remark: resolveNote.value,
+    })
 
-  // 更新本地数据状态 (实际应重新拉取列表)
-  const index = tableData.value.findIndex(item => item.id === currentRow.value.id)
-  if (index !== -1) {
-    tableData.value[index].status = '已解决'
+    ElMessage.success('处理成功')
+    dialogVisible.value = false
+    await Promise.all([
+      fetchStats(),
+      fetchList(),
+    ])
+  } catch (error) {
+    console.error('处理异常工单失败', error)
+    ElMessage.error('处理失败，请稍后重试')
+  } finally {
+    submitting.value = false
   }
 }
 </script>
@@ -867,3 +1029,8 @@ const confirmResolve = () => {
   color: #909399;
 }
 </style>
+
+
+
+
+

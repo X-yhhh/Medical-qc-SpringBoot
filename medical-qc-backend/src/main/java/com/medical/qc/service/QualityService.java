@@ -9,7 +9,32 @@ import java.util.List;
 import java.util.Map;
 
 public interface QualityService {
+    /**
+     * 获取指定用户的全部脑出血检测历史记录。
+     *
+     * @param userId 用户 ID
+     * @return 历史记录列表
+     */
     List<HemorrhageRecord> getHistory(Long userId);
+
+    /**
+     * 获取指定用户最近的脑出血检测历史记录。
+     *
+     * @param userId 用户 ID
+     * @param limit 返回数量上限
+     * @return 历史记录列表
+     */
+    List<HemorrhageRecord> getHistory(Long userId, Integer limit);
+
+    /**
+     * ???????????????????
+     *
+     * @param userId   ?? ID
+     * @param recordId ???? ID
+     * @return ????????????? null
+     */
+    HemorrhageRecord getHistoryRecord(Long userId, Long recordId);
+
     Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId) throws IOException;
     
     // Mock methods for other items

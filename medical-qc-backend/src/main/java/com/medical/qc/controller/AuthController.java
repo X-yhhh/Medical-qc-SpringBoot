@@ -2,8 +2,10 @@ package com.medical.qc.controller;
 
 import com.medical.qc.bean.LoginReq;
 import com.medical.qc.bean.RegisterReq;
+import com.medical.qc.common.AuthRole;
 import com.medical.qc.entity.User;
 import com.medical.qc.service.AuthService;
+import com.medical.qc.support.SessionUserSupport;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
@@ -21,24 +23,21 @@ public class AuthController {
     @Autowired
     private AuthService authService;
 
+    @Autowired
+    private SessionUserSupport sessionUserSupport;
+
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginReq req, HttpSession session) {
-        User user = authService.login(req.getUsername(), req.getPassword());
+        User user = authService.login(req.getUsername(), req.getPassword(), req.getRole());
         if (user != null) {
             user.setPasswordHash(null);
             user.setAccessToken(null);
-            // Store user in session
             session.setAttribute("user", user);
-            
-            // Return user info (no token needed)
-            Map<String, Object> response = new HashMap<>();
-            response.put("username", user.getUsername());
-            response.put("fullName", user.getFullName());
-            response.put("role", "doctor");
-            
-            return ResponseEntity.ok(response);
+
+            return ResponseEntity.ok(buildUserResponse(user));
         }
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Collections.singletonMap("detail", "用户名或密码错误"));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Collections.singletonMap("detail", "账号、密码或身份不正确"));
     }
     
     @PostMapping("/logout")
@@ -49,16 +48,8 @@ public class AuthController {
 
     @GetMapping("/current")
     public ResponseEntity<?> getCurrentUser(HttpSession session) {
-        User user = (User) session.getAttribute("user");
-        if (user == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Collections.singletonMap("detail", "Not authenticated"));
-        }
-        
-        Map<String, Object> response = new HashMap<>();
-        response.put("username", user.getUsername());
-        response.put("fullName", user.getFullName());
-        response.put("role", "doctor");
-        return ResponseEntity.ok(response);
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(buildUserResponse(user));
     }
 
     @PostMapping("/register")
@@ -69,12 +60,25 @@ public class AuthController {
                 req.getPassword(),
                 req.getFullName(),
                 req.getHospital(),
-                req.getDepartment()
+                req.getDepartment(),
+                req.getRole()
         );
 
         if ("success".equals(result)) {
             return ResponseEntity.ok(Collections.singletonMap("message", "Register successful"));
         }
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Collections.singletonMap("detail", result));
+    }
+
+    private Map<String, Object> buildUserResponse(User user) {
+        AuthRole authRole = AuthRole.fromRoleId(user.getRoleId());
+        Map<String, Object> response = new HashMap<>();
+        response.put("id", user.getId());
+        response.put("username", user.getUsername());
+        response.put("fullName", user.getFullName());
+        response.put("role", authRole.getCode());
+        response.put("roleId", authRole.getId());
+        response.put("roleLabel", authRole.getDisplayName());
+        return response;
     }
 }

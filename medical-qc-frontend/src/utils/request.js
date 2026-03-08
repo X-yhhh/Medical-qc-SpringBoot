@@ -1,4 +1,4 @@
-// src/utils/request.js
+﻿// src/utils/request.js
 /**
  * @file src/utils/request.js
  * @description Axios 请求封装模块
@@ -9,6 +9,7 @@
  */
 
 import axios from 'axios'
+import { clearAuthState } from '@/utils/auth'
 
 let router = null
 
@@ -43,16 +44,31 @@ instance.interceptors.response.use(
 
   // 失败：统一错误处理
   (error) => {
+    const skipAuthRedirect = Boolean(error.config?.skipAuthRedirect)
+
     // 处理 401 Unauthorized (Session 过期或未登录)
     if (error.response?.status === 401) {
-      // 1. 清除本地存储的用户信息 (Session Cookie 由浏览器清除或覆盖)
-      sessionStorage.removeItem('user_info')
+      clearAuthState()
 
-      // 2. 跳转回登录页
+      if (!skipAuthRedirect) {
+        const unauthorizedDetail = error.response?.data?.detail || ''
+        const loginMode = unauthorizedDetail.includes('权限已变更') || unauthorizedDetail.includes('账号状态已变更')
+          ? 'permission-updated'
+          : 'expired'
+
+        if (router) {
+          router.push(`/login?mode=${loginMode}`)
+        } else {
+          window.location.href = `/login?mode=${loginMode}`
+        }
+      }
+    }
+
+    if (error.response?.status === 403) {
       if (router) {
-        router.push('/login')
+        router.push('/forbidden')
       } else {
-        window.location.href = '/login'
+        window.location.href = '/forbidden'
       }
     }
     // 继续抛出错误，供调用方具体处理
@@ -61,3 +77,4 @@ instance.interceptors.response.use(
 )
 
 export default instance
+
