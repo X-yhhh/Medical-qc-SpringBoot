@@ -12,3 +12,4 @@ medical-qc-frontend/dist/
 *.log
 __pycache__/
 *.pyc
+.doc/
