@@ -13,3 +13,4 @@ medical-qc-frontend/dist/
 __pycache__/
 *.pyc
 .doc/
+CLAUDE.md
