@@ -286,6 +286,39 @@
       </template>
     </el-dialog>
 
+    <!--
+      选择上传方式弹窗
+      功能: 在结果页新建案例时，继续支持本地上传和 PACS 调取两种入口。
+    -->
+    <el-dialog
+      v-model="uploadMethodDialogVisible"
+      title="选择上传方式"
+      width="600px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <el-row :gutter="20" justify="center">
+        <el-col :span="11">
+          <div class="choice-card local-upload" @click="uploadMethodDialogVisible = false; openUploadDialog('local')">
+            <div class="icon-wrapper">
+              <el-icon><FolderOpened /></el-icon>
+            </div>
+            <h3>本地影像上传</h3>
+            <p>继续创建本地上传质控案例</p>
+          </div>
+        </el-col>
+        <el-col :span="11">
+          <div class="choice-card pacs-select" @click="uploadMethodDialogVisible = false; simulatePacsSelect()">
+            <div class="icon-wrapper">
+              <el-icon><Connection /></el-icon>
+            </div>
+            <h3>PACS 系统调取</h3>
+            <p>继续创建 PACS 调取质控案例</p>
+          </div>
+        </el-col>
+      </el-row>
+    </el-dialog>
+
     <!-- 新建案例弹窗 -->
     <el-dialog v-model="uploadDialogVisible" title="新建质控案例" width="500px" destroy-on-close>
       <el-form
@@ -344,6 +377,7 @@ import { computed } from 'vue'
 import { ArrowLeft, User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
 import { detectChestNonContrast } from '@/api/quality'
 import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
+import { buildChestNonContrastStaticPacsResult } from '@/utils/staticQualityPacs'
 
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
@@ -357,6 +391,7 @@ const {
   analysisLogs,
   dialogVisible,
   currentItem,
+  uploadMethodDialogVisible,
   uploadDialogVisible,
   uploadMode,
   uploadFormRef,
@@ -375,6 +410,7 @@ const {
   handleExport,
 } = useAsyncQualityTaskPage({
   submitTask: detectChestNonContrast,
+  buildStaticPacsResult: buildChestNonContrastStaticPacsResult,
   initialPatientInfo: {
     name: '',
     gender: '',

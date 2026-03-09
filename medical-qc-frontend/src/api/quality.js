@@ -96,10 +96,16 @@ export const getQualityTask = async (taskId) => {
 
 /**
  * 脑出血智能检测 (Real AI Service)
+ * PACS模式下file为null，通过examId从数据库获取图片路径
  */
 export const predictHemorrhage = async (file, metadata = {}) => {
   const formData = new FormData()
-  formData.append('file', file)
+  // PACS模式下不传file，本地模式必须传file
+  if (metadata.sourceMode === 'pacs') {
+    // PACS模式：不添加file字段
+  } else if (file) {
+    formData.append('file', file)
+  }
   if (metadata.patientName) formData.append('patient_name', metadata.patientName)
   if (metadata.patientCode) formData.append('patient_code', metadata.patientCode)
   if (metadata.examId) formData.append('exam_id', metadata.examId)
@@ -108,6 +114,7 @@ export const predictHemorrhage = async (file, metadata = {}) => {
     formData.append('age', metadata.age)
   }
   if (metadata.studyDate) formData.append('study_date', metadata.studyDate)
+  if (metadata.sourceMode) formData.append('source_mode', metadata.sourceMode)
 
   try {
     return await request.post('/quality/hemorrhage', formData, {
@@ -141,5 +148,17 @@ export const getHemorrhageRecord = async (recordId) => {
   } catch (error) {
     console.error('获取指定出血检测历史记录失败', error)
     throw error
+  }
+}
+
+/**
+ * 查询PACS检查记录
+ * 支持多条件组合查询：患者ID、患者姓名、检查号、日期范围
+ */
+export const searchPacsStudies = async (params) => {
+  try {
+    return await request.get('/pacs/search', { params })
+  } catch (error) {
+    throw parseRequestError(error, 'PACS查询失败')
   }
 }

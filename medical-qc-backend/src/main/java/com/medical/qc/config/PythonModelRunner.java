@@ -1,5 +1,6 @@
 package com.medical.qc.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
@@ -13,8 +14,15 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 /**
@@ -30,7 +38,9 @@ import java.util.concurrent.TimeUnit;
 public class PythonModelRunner implements CommandLineRunner, DisposableBean {
 
     private static final Logger logger = LoggerFactory.getLogger(PythonModelRunner.class);
+    private static final Pattern NETSTAT_PID_PATTERN = Pattern.compile("(\\d+)\\s*$");
     private Process pythonProcess;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${python.model.autostart:true}")
     private boolean autoStart;
@@ -68,8 +78,16 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
             port = "wss".equalsIgnoreCase(serverUri.getScheme()) ? 443 : 80;
         }
 
-        if (isWebSocketReady(serverUri, 2)) {
+        if (isWebSocketHealthy(serverUri, 2)) {
             logger.info("Python Model Server is already listening on {}:{}, skip autostart.", host, port);
+            return;
+        }
+
+        logger.warn("Detected unhealthy Python Model Server on {}:{}, attempting cleanup and restart.", host, port);
+        cleanupUnhealthyModelServer(port);
+
+        if (isWebSocketHealthy(serverUri, 2)) {
+            logger.info("Python Model Server recovered before autostart on {}:{}, skip creating a new process.", host, port);
             return;
         }
 
@@ -171,26 +189,48 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
         }
     }
 
-    private boolean isWebSocketReady(URI uri, int connectTimeoutSeconds) {
+    /**
+     * 通过健康检查请求确认模型服务已经真正可用，而不是仅仅端口打开。
+     *
+     * @param uri 模型服务地址
+     * @param connectTimeoutSeconds 建连超时时间（秒）
+     * @return true 表示模型服务可正常响应该健康检查
+     */
+    private boolean isWebSocketHealthy(URI uri, int connectTimeoutSeconds) {
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+
         WebSocketClient client = new WebSocketClient(uri) {
             @Override
             public void onOpen(ServerHandshake handshakedata) {
+                try {
+                    send(objectMapper.writeValueAsString(Map.of("health_check", true)));
+                } catch (Exception e) {
+                    future.complete(false);
+                }
             }
 
             @Override
             public void onMessage(String message) {
+                future.complete(parseHealthCheckResponse(message));
             }
 
             @Override
             public void onClose(int code, String reason, boolean remote) {
+                if (!future.isDone()) {
+                    future.complete(false);
+                }
             }
 
             @Override
             public void onError(Exception ex) {
+                future.complete(false);
             }
         };
         try {
-            return client.connectBlocking(connectTimeoutSeconds, TimeUnit.SECONDS);
+            if (!client.connectBlocking(connectTimeoutSeconds, TimeUnit.SECONDS)) {
+                return false;
+            }
+            return future.get(3, TimeUnit.SECONDS);
         } catch (Exception e) {
             return false;
         } finally {
@@ -201,10 +241,18 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
         }
     }
 
+    /**
+     * 轮询等待模型服务通过健康检查。
+     *
+     * @param uri 模型服务地址
+     * @param timeoutMs 总超时时间（毫秒）
+     * @param intervalMs 轮询间隔（毫秒）
+     * @return true 表示模型服务已经可用
+     */
     private boolean waitForWebSocketReady(URI uri, long timeoutMs, long intervalMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            if (isWebSocketReady(uri, 2)) {
+            if (isWebSocketHealthy(uri, 2)) {
                 logger.info("Python Model Server is ready at {}", uri);
                 return true;
             }
@@ -216,6 +264,108 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
             }
         }
         return false;
+    }
+
+    /**
+     * 解析 Python 模型服务的健康检查响应。
+     *
+     * @param message WebSocket 返回的 JSON 文本
+     * @return true 表示响应格式正确且模型已完成加载
+     */
+    private boolean parseHealthCheckResponse(String message) {
+        try {
+            Map<?, ?> response = objectMapper.readValue(message, Map.class);
+            Object status = response.get("status");
+            Object modelLoaded = response.get("model_loaded");
+            return "ok".equals(String.valueOf(status)) && Boolean.TRUE.equals(modelLoaded);
+        } catch (Exception e) {
+            logger.warn("Failed to parse Python Model Server health response: {}", message);
+            return false;
+        }
+    }
+
+    /**
+     * 清理占用模型端口但健康检查失败的旧进程，避免后端误连到错误 Python 环境。
+     *
+     * @param port 模型服务端口
+     */
+    private void cleanupUnhealthyModelServer(int port) {
+        List<Long> pidList = findListeningProcessIds(port);
+        if (pidList.isEmpty()) {
+            return;
+        }
+
+        for (Long pid : pidList) {
+            try {
+                ProcessHandle.of(pid).ifPresent(processHandle -> {
+                    String commandLine = processHandle.info().commandLine().orElse("");
+                    String command = processHandle.info().command().orElse("");
+                    String processSummary = (commandLine + " " + command).toLowerCase(Locale.ROOT);
+
+                    if (!processSummary.contains("model_server.py")) {
+                        logger.warn("Port {} is occupied by non-model process PID={}, skip cleanup. command={}",
+                                port, pid, commandLine);
+                        return;
+                    }
+
+                    logger.warn("Stopping unhealthy Python Model Server process PID={}, command={}", pid, commandLine);
+                    processHandle.destroy();
+                    try {
+                        processHandle.onExit().get(5, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        processHandle.destroyForcibly();
+                    }
+                });
+            } catch (Exception e) {
+                logger.warn("Failed to cleanup unhealthy Python Model Server PID={}", pid, e);
+            }
+        }
+    }
+
+    /**
+     * 在 Windows 环境下通过 netstat 查询指定端口的监听进程。
+     *
+     * @param port 端口号
+     * @return 监听该端口的进程 ID 列表
+     */
+    private List<Long> findListeningProcessIds(int port) {
+        List<Long> pidList = new ArrayList<>();
+        String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (!osName.contains("win")) {
+            return pidList;
+        }
+
+        Process process = null;
+        try {
+            process = new ProcessBuilder("cmd", "/c", "netstat -ano -p tcp | findstr LISTENING | findstr :" + port)
+                    .redirectErrorStream(true)
+                    .start();
+
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (!line.contains(":" + port)) {
+                        continue;
+                    }
+
+                    Matcher matcher = NETSTAT_PID_PATTERN.matcher(line.trim());
+                    if (matcher.find()) {
+                        pidList.add(Long.parseLong(matcher.group(1)));
+                    }
+                }
+            }
+
+            process.waitFor(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            logger.warn("Failed to query listening processes for port {}", port, e);
+        } finally {
+            if (process != null) {
+                process.destroy();
+            }
+        }
+
+        return pidList;
     }
 
     private String resolvePythonExecutable(String projectDir) {

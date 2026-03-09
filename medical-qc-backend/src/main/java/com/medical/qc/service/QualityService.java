@@ -43,7 +43,8 @@ public interface QualityService {
                                           String examId,
                                           String gender,
                                           Integer age,
-                                          LocalDate studyDate) throws IOException;
+                                          LocalDate studyDate,
+                                          String sourceMode) throws IOException;
     
     // Mock methods for other items
     Map<String, Object> detectHead(MultipartFile file);

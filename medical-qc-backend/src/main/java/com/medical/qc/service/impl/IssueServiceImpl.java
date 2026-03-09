@@ -10,7 +10,9 @@ import com.medical.qc.mapper.HemorrhageRecordMapper;
 import com.medical.qc.mapper.QcIssueHandleLogMapper;
 import com.medical.qc.mapper.QcIssueRecordMapper;
 import com.medical.qc.service.IssueService;
+import com.medical.qc.service.QualityPatientInfoService;
 import com.medical.qc.support.HemorrhageIssueSupport;
+import com.medical.qc.support.QualityPatientTaskSupport;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -50,6 +52,9 @@ public class IssueServiceImpl implements IssueService {
 
     @Autowired
     private HemorrhageRecordMapper hemorrhageRecordMapper;
+
+    @Autowired
+    private QualityPatientInfoService qualityPatientInfoService;
 
     @Override
     public void syncHemorrhageIssue(HemorrhageRecord record) {
@@ -278,7 +283,7 @@ public class IssueServiceImpl implements IssueService {
             newIssueRecord.setDescription(description);
             newIssueRecord.setPriority(priority);
             newIssueRecord.setStatus(STATUS_PENDING);
-            newIssueRecord.setImageUrl(record.getImagePath());
+            newIssueRecord.setImageUrl(resolvePreferredImageUrl(record));
             newIssueRecord.setCreatedAt(record.getCreatedAt() == null ? LocalDateTime.now() : record.getCreatedAt());
             newIssueRecord.setUpdatedAt(record.getUpdatedAt() == null ? newIssueRecord.getCreatedAt() : record.getUpdatedAt());
             qcIssueRecordMapper.insert(newIssueRecord);
@@ -300,7 +305,7 @@ public class IssueServiceImpl implements IssueService {
         changed |= updateStringField(issueRecord.getIssueType(), issueType, issueRecord::setIssueType);
         changed |= updateStringField(issueRecord.getDescription(), description, issueRecord::setDescription);
         changed |= updateStringField(issueRecord.getPriority(), priority, issueRecord::setPriority);
-        changed |= updateStringField(issueRecord.getImageUrl(), record.getImagePath(), issueRecord::setImageUrl);
+        changed |= updateStringField(issueRecord.getImageUrl(), resolvePreferredImageUrl(record), issueRecord::setImageUrl);
 
         if (issueRecord.getCreatedAt() == null && record.getCreatedAt() != null) {
             issueRecord.setCreatedAt(record.getCreatedAt());
@@ -425,7 +430,7 @@ public class IssueServiceImpl implements IssueService {
         item.put("ventricleIssue", record.getVentricleIssue());
         item.put("ventricleDetail", record.getVentricleDetail());
         item.put("device", record.getDevice());
-        item.put("imageUrl", normalizeImageUrl(record.getImagePath()));
+        item.put("imageUrl", normalizeImageUrl(resolvePreferredImageUrl(record)));
         item.put("createdAt", formatDateTime(record.getCreatedAt(), SUMMARY_TIME_FORMATTER));
         item.put("updatedAt", formatDateTime(record.getUpdatedAt(), SUMMARY_TIME_FORMATTER));
 
@@ -481,6 +486,29 @@ public class IssueServiceImpl implements IssueService {
         }
 
         return imageUrl.startsWith("/") ? imageUrl.replace('\\', '/') : "/" + imageUrl.replace('\\', '/');
+    }
+
+    /**
+     * 优先使用患者信息管理页维护的患者影像图片，缺失时回退到检测记录图片。
+     *
+     * @param record 脑出血检测记录
+     * @return 图片路径
+     */
+    private String resolvePreferredImageUrl(HemorrhageRecord record) {
+        if (record == null) {
+            return null;
+        }
+
+        if (StringUtils.hasText(record.getExamId())) {
+            var patientInfo = qualityPatientInfoService.getByAccessionNumber(
+                    QualityPatientTaskSupport.TASK_TYPE_HEMORRHAGE,
+                    record.getExamId());
+            if (patientInfo != null && StringUtils.hasText(patientInfo.getImagePath())) {
+                return patientInfo.getImagePath();
+            }
+        }
+
+        return record.getImagePath();
     }
 
     private String resolveModuleName(String sourceType) {

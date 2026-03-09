@@ -90,7 +90,7 @@
 
               <!-- PACS 入口卡片：当前环境未接入真实 PACS，提示改用本地上传 -->
               <el-col :span="10">
-                <div class="choice-card pacs-select" @click="simulatePacsSelect">
+                <div class="choice-card pacs-select" @click="openPacsSearch">
                   <div class="icon-wrapper">
                     <el-icon><Connection /></el-icon>
                   </div>
@@ -371,6 +371,42 @@
          </el-row>
       </div>
     </el-dialog>
+
+    <!-- 选择上传方式对话框 -->
+    <el-dialog
+      v-model="uploadMethodDialogVisible"
+      title="选择上传方式"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <el-row :gutter="20" justify="center">
+        <el-col :span="11">
+          <div class="choice-card local-upload" @click="openUploadDialog('local'); uploadMethodDialogVisible = false">
+            <div class="icon-wrapper">
+              <el-icon><FolderOpened /></el-icon>
+            </div>
+            <h3>本地影像上传</h3>
+            <p>支持 PNG / JPG / BMP 影像上传</p>
+          </div>
+        </el-col>
+        <el-col :span="11">
+          <div class="choice-card pacs-select" @click="openPacsSearch(); uploadMethodDialogVisible = false">
+            <div class="icon-wrapper">
+              <el-icon><Connection /></el-icon>
+            </div>
+            <h3>PACS 系统调取</h3>
+            <p>连接医院内部影像归档系统</p>
+          </div>
+        </el-col>
+      </el-row>
+    </el-dialog>
+
+    <!-- PACS查询对话框 -->
+    <PacsSearchDialog
+      v-model:visible="pacsSearchDialogVisible"
+      task-type="hemorrhage"
+      @select="handlePacsSelect"
+    />
   </div>
 </template>
 
@@ -398,6 +434,7 @@ import { ElMessage } from 'element-plus'
 import { User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { predictHemorrhage, getHemorrhageHistory, getHemorrhageRecord } from '@/api/quality'
+import PacsSearchDialog from '@/components/PacsSearchDialog.vue'
 import '@/assets/css/hemorrhage-scan.css'
 
 const route = useRoute()
@@ -412,6 +449,8 @@ const uploadFormRef = ref(null)
 const selectedFile = ref(null)
 const dialogVisible = ref(false)
 const currentItem = ref(null)
+const pacsSearchDialogVisible = ref(false)
+const uploadMethodDialogVisible = ref(false)
 
 // --- 结果数据 ---
 const qcItems = ref([])
@@ -647,6 +686,31 @@ const normalizeImageUrl = (rawUrl) => {
 }
 
 /**
+ * 根据结果中的来源字段或图片路径推断当前案例来源。
+ *
+ * 作用：
+ * 1. 让历史记录、刷新后的结果页仍能识别本案例是否来自 PACS。
+ * 2. 使“重新分析”按钮可以直接复用当前 PACS 案例，而不是退回本地上传。
+ *
+ * @param {string} explicitSourceMode - 后端显式返回的来源模式
+ * @param {string} rawImageUrl - 原始图片路径
+ * @returns {string} `pacs` 或 `local`
+ */
+const resolveSourceMode = (explicitSourceMode, rawImageUrl) => {
+  const normalizedSourceMode = resolveText(explicitSourceMode, '').toLowerCase()
+  if (normalizedSourceMode === 'pacs' || normalizedSourceMode === 'local') {
+    return normalizedSourceMode
+  }
+
+  const normalizedImageUrl = normalizeImageUrl(rawImageUrl)
+  if (normalizedImageUrl.includes('/uploads/pacs/') || normalizedImageUrl.includes('/pacs/')) {
+    return 'pacs'
+  }
+
+  return 'local'
+}
+
+/**
  * 兼容后端返回的单个 bbox 或 bbox 数组。
  *
  * @param {unknown} rawBboxes - 原始 bbox 数据
@@ -765,6 +829,10 @@ const normalizeHemorrhagePayload = (source = {}) => {
   const normalizedPayload = {
     prediction,
     qc_status: resolveText(source?.qcStatus, rawResult?.qc_status),
+    source_mode: resolveSourceMode(
+      resolveText(source?.sourceMode, rawResult?.source_mode),
+      resolveText(rawResult?.image_url, source?.imagePath),
+    ),
     confidence_level: resolveText(source?.confidenceLevel, rawResult?.confidence_level, rawResult?.confidence, '--'),
     hemorrhage_probability: resolveNumber(
       source?.hemorrhageProbability,
@@ -859,6 +927,7 @@ const applyHemorrhageResult = (resultPayload) => {
   uploadForm.gender = patientInfo.value.gender === '--' ? '未说明' : patientInfo.value.gender
   uploadForm.age = patientInfo.value.age
   uploadForm.studyDate = patientInfo.value.studyDate === '--' ? '' : patientInfo.value.studyDate
+  uploadMode.value = resultPayload.source_mode === 'pacs' ? 'pacs' : 'local'
   qcItems.value = buildQcItems(resultPayload, hemorrhageProb.value)
 }
 
@@ -1000,18 +1069,35 @@ const handleDialogFileRemove = () => {
 }
 
 /**
- * 当前环境尚未对接真实 PACS，统一引导改用本地上传。
+ * 打开PACS查询对话框
  */
-const simulatePacsSelect = () => {
-  ElMessage.warning('当前环境暂未接入真实 PACS，请使用本地影像上传')
-  openUploadDialog('local')
+const openPacsSearch = () => {
+  pacsSearchDialogVisible.value = true
 }
 
 /**
- * 重置上传状态。
+ * 处理PACS记录选择
+ * 将选中的PACS检查记录信息填充到上传表单
+ */
+const handlePacsSelect = (selectedStudy) => {
+  uploadForm.patientName = selectedStudy.patientName
+  uploadForm.patientCode = selectedStudy.patientId
+  uploadForm.examId = selectedStudy.accessionNumber
+  uploadForm.gender = selectedStudy.gender || '未说明'
+  uploadForm.age = selectedStudy.age || null
+  uploadForm.studyDate = selectedStudy.studyDate || ''
+  selectedFile.value = null
+  uploadMode.value = 'pacs'
+  uploadDialogVisible.value = true
+  pacsSearchDialogVisible.value = false
+  ElMessage.success('已选择PACS检查记录，请确认信息后提交')
+}
+
+/**
+ * 重置上传状态，弹出选择上传方式对话框。
  */
 const resetUpload = () => {
-  openUploadDialog('local')
+  uploadMethodDialogVisible.value = true
 }
 
 /**
@@ -1021,6 +1107,17 @@ const resetUpload = () => {
  * @backend-api [POST] /api/v1/quality/hemorrhage（复用分析接口）
  */
 const handleReanalyze = () => {
+  if (uploadMode.value === 'pacs') {
+    if (!uploadForm.examId) {
+      ElMessage.warning('当前 PACS 案例缺少检查号，请重新选择 PACS 记录')
+      openPacsSearch()
+      return
+    }
+
+    startAnalysisProcess()
+    return
+  }
+
   if (!selectedFile.value) {
     ElMessage.warning('当前仅支持基于本地文件重新分析，请重新上传影像')
     openUploadDialog('local')
@@ -1110,13 +1207,8 @@ const submitUpload = async () => {
     return
   }
 
-  if (uploadMode.value !== 'local') {
-    ElMessage.warning('当前环境暂未接入真实 PACS，请使用本地影像上传')
-    openUploadDialog('local')
-    return
-  }
-
-  if (!selectedFile.value) {
+  // 本地模式需要检查文件
+  if (uploadMode.value === 'local' && !selectedFile.value) {
     ElMessage.warning('请上传影像文件')
     return
   }
@@ -1133,8 +1225,15 @@ const submitUpload = async () => {
  * @backend-api [POST] /api/v1/quality/hemorrhage（通过 predictHemorrhage 调用）
  */
 const startAnalysisProcess = async () => {
-  if (!selectedFile.value) {
+  // 本地模式需要检查文件
+  if (uploadMode.value === 'local' && !selectedFile.value) {
     ElMessage.warning('请先上传影像文件')
+    return
+  }
+
+  // PACS模式需要检查examId
+  if (uploadMode.value === 'pacs' && !uploadForm.examId) {
+    ElMessage.warning('PACS模式下必须提供检查号')
     return
   }
 
@@ -1169,6 +1268,7 @@ const startAnalysisProcess = async () => {
       gender: uploadForm.gender,
       age: uploadForm.age,
       studyDate: uploadForm.studyDate,
+      sourceMode: uploadMode.value
     })
 
     clearInterval(progressTimer)

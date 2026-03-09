@@ -27,6 +27,20 @@ export const ROLE_MENU_CONFIG = [
     ],
   },
   {
+    type: 'group',
+    index: 'patient-info-group',
+    label: '患者信息管理',
+    icon: 'UserFilled',
+    roles: ['doctor', 'admin'],
+    children: [
+      { index: '/patient-info/head', label: 'CT头部平扫患者', roles: ['doctor', 'admin'] },
+      { index: '/patient-info/hemorrhage', label: '头部出血患者', roles: ['doctor', 'admin'] },
+      { index: '/patient-info/chest-non-contrast', label: 'CT胸部平扫患者', roles: ['doctor', 'admin'] },
+      { index: '/patient-info/chest-contrast', label: 'CT胸部增强患者', roles: ['doctor', 'admin'] },
+      { index: '/patient-info/coronary-cta', label: '冠脉CTA患者', roles: ['doctor', 'admin'] },
+    ],
+  },
+  {
     type: 'item',
     index: '/issues',
     label: '异常汇总',

@@ -49,6 +49,13 @@ public class HemorrhageRecord implements Serializable {
     @TableField(exist = false)
     private String primaryIssue;
 
+    /**
+     * 患者信息表维护的患者影像图片路径。
+     * 该字段为运行期派生数据，不落库。
+     */
+    @TableField(exist = false)
+    private String patientImagePath;
+
     public Long getId() {
         return id;
     }
@@ -247,5 +254,13 @@ public class HemorrhageRecord implements Serializable {
 
     public void setPrimaryIssue(String primaryIssue) {
         this.primaryIssue = primaryIssue;
+    }
+
+    public String getPatientImagePath() {
+        return patientImagePath;
+    }
+
+    public void setPatientImagePath(String patientImagePath) {
+        this.patientImagePath = patientImagePath;
     }
 }

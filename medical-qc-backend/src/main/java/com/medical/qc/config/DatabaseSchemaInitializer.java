@@ -53,6 +53,12 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
         } catch (Exception exception) {
             logger.error("Hemorrhage record schema initialization failed.", exception);
         }
+
+        try {
+            ensureQualityPatientInfoSchema();
+        } catch (Exception exception) {
+            logger.error("Quality patient info schema initialization failed.", exception);
+        }
     }
 
     /**
@@ -63,6 +69,7 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
         populator.setSqlScriptEncoding("UTF-8");
         populator.addScript(new ClassPathResource("sql/create_qc_history_tables_v1.sql"));
         populator.addScript(new ClassPathResource("sql/create_qc_issue_tables_v1.sql"));
+        populator.addScript(new ClassPathResource("sql/create_quality_patient_tables_v1.sql"));
 
         try {
             DatabasePopulatorUtils.execute(populator, dataSource);
@@ -252,6 +259,33 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
 
             addIndexIfMissing(connection, statement, "hemorrhage_records", "idx_hemorrhage_user_created_at",
                     "ALTER TABLE `hemorrhage_records` ADD INDEX `idx_hemorrhage_user_created_at` (`user_id`, `created_at`)");
+        }
+    }
+
+    /**
+     * 为五个质控项患者信息表补齐影像图片字段。
+     *
+     * <p>用于兼容上一轮已创建但尚未包含 `image_path` 字段的历史数据库。</p>
+     */
+    private void ensureQualityPatientInfoSchema() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            String[] patientInfoTables = new String[] {
+                    "head_patient_info",
+                    "hemorrhage_patient_info",
+                    "chest_non_contrast_patient_info",
+                    "chest_contrast_patient_info",
+                    "coronary_cta_patient_info"
+            };
+
+            for (String tableName : patientInfoTables) {
+                if (!tableExists(connection, tableName)) {
+                    continue;
+                }
+
+                addColumnIfMissing(connection, statement, tableName, "image_path",
+                        "ALTER TABLE `" + tableName + "` ADD COLUMN `image_path` varchar(500) DEFAULT NULL COMMENT '患者影像图片路径' AFTER `study_date`");
+            }
         }
     }
 

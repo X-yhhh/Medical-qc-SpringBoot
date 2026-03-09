@@ -74,6 +74,16 @@
               <div class="sidebar-title">{{ recentPanelTitle }}</div>
               <div v-if="recentVisits.length" class="recent-list">
                 <div class="recent-item" v-for="item in recentVisits" :key="item.id" @click="handleRecentVisitClick(item)">
+                  <el-image
+                    v-if="item.imageUrl"
+                    :src="item.imageUrl"
+                    fit="cover"
+                    class="recent-image"
+                    :preview-src-list="[item.imageUrl]"
+                    preview-teleported
+                    @click.stop
+                  />
+                  <div v-else class="recent-image-placeholder">无图</div>
                   <el-tag size="small" :type="item.type" effect="plain" class="recent-tag">{{
                     item.tag
                   }}</el-tag>
@@ -624,11 +634,31 @@ const loadRecentVisits = async () => {
       issue: buildRecentVisitIssue(record),
       type: getRecentVisitType(tag),
       tag,
+      imageUrl: normalizeImageUrl(record.patientImagePath || record.imagePath),
       time: formatRecentVisitTime(record.createdAt),
       path: '/hemorrhage',
       query: { recordId: record.id },
     }
   })
+}
+
+/**
+ * 规范化图片路径，便于首页最近访问直接预览患者影像。
+ *
+ * @param {string} rawUrl - 原始图片路径
+ * @returns {string} 可访问的图片地址
+ */
+const normalizeImageUrl = (rawUrl) => {
+  if (!rawUrl) {
+    return ''
+  }
+
+  const normalizedUrl = String(rawUrl).trim().replaceAll('\\', '/')
+  if (normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://') || normalizedUrl.startsWith('data:')) {
+    return normalizedUrl
+  }
+
+  return normalizedUrl.startsWith('/') ? normalizedUrl : `/${normalizedUrl}`
 }
 
 /**
@@ -1025,10 +1055,33 @@ onUnmounted(() => {
 .recent-item {
   display: flex;
   align-items: center;
+  gap: 8px;
   font-size: 13px;
   color: #606266;
   cursor: pointer;
   padding: 4px 0;
+}
+
+.recent-image {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid #ebeef5;
+  flex: 0 0 34px;
+}
+
+.recent-image-placeholder {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px dashed #dcdfe6;
+  background: #fafafa;
+  color: #909399;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
 }
 
 .recent-item:hover {
@@ -1036,7 +1089,6 @@ onUnmounted(() => {
 }
 
 .recent-tag {
-  margin-right: 8px;
   min-width: 48px;
   text-align: center;
 }

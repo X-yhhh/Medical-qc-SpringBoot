@@ -4,11 +4,15 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.medical.qc.messaging.HemorrhageIssueSyncDispatcher;
 import com.medical.qc.entity.HemorrhageRecord;
+import com.medical.qc.entity.PacsStudyCache;
 import com.medical.qc.entity.User;
 import com.medical.qc.mapper.HemorrhageRecordMapper;
+import com.medical.qc.service.PacsService;
+import com.medical.qc.service.QualityPatientInfoService;
 import com.medical.qc.service.QualityService;
 import com.medical.qc.support.HemorrhageIssueSupport;
 import com.medical.qc.support.MockQualityAnalysisSupport;
+import com.medical.qc.support.QualityPatientTaskSupport;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,9 +27,11 @@ import java.time.LocalDateTime;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import javax.imageio.ImageIO;
 import java.awt.image.BufferedImage;
 
@@ -41,6 +47,12 @@ public class QualityServiceImpl implements QualityService {
 
     @Autowired
     private HemorrhageIssueSyncDispatcher hemorrhageIssueSyncDispatcher;
+
+    @Autowired
+    private PacsService pacsService;
+
+    @Autowired
+    private QualityPatientInfoService qualityPatientInfoService;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -130,20 +142,86 @@ public class QualityServiceImpl implements QualityService {
                                                  String examId,
                                                  String gender,
                                                  Integer age,
-                                                 LocalDate studyDate)
+                                                 LocalDate studyDate,
+                                                 String sourceMode)
             throws IOException {
-        validateHemorrhageFile(file);
 
-        if (Files.notExists(rootLocation)) {
-            Files.createDirectories(rootLocation);
+        String normalizedSourceMode = MockQualityAnalysisSupport.normalizeSourceMode(sourceMode);
+        String imagePathForAnalysis;
+        String savedImagePath;
+        String resolvedPatientName = normalizeText(patientName);
+        String resolvedPatientCode = normalizeText(patientCode);
+        String resolvedGender = normalizeText(gender);
+        Integer resolvedAge = normalizeAge(age);
+        LocalDate resolvedStudyDate = studyDate;
+        String resolvedScannerModel = HEMORRHAGE_SCANNER_MODEL;
+
+        // PACS模式：从数据库查询图片路径
+        if ("pacs".equalsIgnoreCase(normalizedSourceMode)) {
+            if (examId == null || examId.trim().isEmpty()) {
+                throw new IllegalArgumentException("PACS模式下必须提供检查号(examId)");
+            }
+
+            // 查询PACS记录
+            List<PacsStudyCache> studies = pacsService.searchStudies(
+                    QualityPatientTaskSupport.TASK_TYPE_HEMORRHAGE,
+                    null,
+                    null,
+                    examId,
+                    null,
+                    null);
+            if (studies.isEmpty()) {
+                throw new IllegalArgumentException("未找到检查号为 " + examId + " 的PACS记录");
+            }
+
+            PacsStudyCache pacsStudy = studies.get(0);
+            if (pacsStudy.getImageFilePath() == null || pacsStudy.getImageFilePath().trim().isEmpty()) {
+                throw new IllegalArgumentException("PACS记录中未配置影像文件路径");
+            }
+
+            imagePathForAnalysis = pacsStudy.getImageFilePath();
+
+            // 验证文件是否存在
+            Path pacsImagePath = Paths.get(imagePathForAnalysis);
+            if (!Files.exists(pacsImagePath)) {
+                throw new IllegalArgumentException("PACS影像文件不存在: " + imagePathForAnalysis);
+            }
+
+            // 将 PACS 原始影像复制到 uploads 目录，保证历史记录回显时可通过 /uploads/** 访问。
+            savedImagePath = copyPacsImageToUploads(pacsImagePath, examId);
+
+            // 当请求参数缺失时，自动回填 PACS 缓存中的患者信息，避免前端仅传 examId 时落库字段为空。
+            resolvedPatientName = firstNonBlank(resolvedPatientName, normalizeText(pacsStudy.getPatientName()));
+            resolvedPatientCode = firstNonBlank(resolvedPatientCode,
+                    normalizeText(pacsStudy.getPatientId()),
+                    normalizeText(examId));
+            resolvedGender = firstNonBlank(resolvedGender, normalizeText(pacsStudy.getGender()));
+            resolvedAge = resolvedAge != null ? resolvedAge : normalizeAge(pacsStudy.getAge());
+            resolvedStudyDate = resolvedStudyDate != null ? resolvedStudyDate : pacsStudy.getStudyDate();
+            resolvedScannerModel = resolvePacsScannerModel(pacsStudy);
+        }
+        // 本地上传模式
+        else {
+            if (file == null || file.isEmpty()) {
+                throw new IllegalArgumentException("本地上传模式下必须提供影像文件");
+            }
+
+            validateHemorrhageFile(file);
+
+            if (Files.notExists(rootLocation)) {
+                Files.createDirectories(rootLocation);
+            }
+
+            String filename = UUID.randomUUID().toString() + "_" + file.getOriginalFilename();
+            Path destinationFile = rootLocation.resolve(Paths.get(filename)).normalize().toAbsolutePath();
+            file.transferTo(destinationFile.toFile());
+
+            imagePathForAnalysis = destinationFile.toString();
+            savedImagePath = "uploads/" + filename;
         }
 
-        String filename = UUID.randomUUID().toString() + "_" + file.getOriginalFilename();
-        Path destinationFile = rootLocation.resolve(Paths.get(filename)).normalize().toAbsolutePath();
-        file.transferTo(destinationFile.toFile());
-
         // Call Python Script via WebSocket
-        Map<String, Object> predictionResult = callPythonModelViaWebSocket(destinationFile.toString());
+        Map<String, Object> predictionResult = callPythonModelViaWebSocket(imagePathForAnalysis);
 
         if (predictionResult.containsKey("error")) {
             throw buildModelServiceException(String.valueOf(predictionResult.get("error")));
@@ -153,13 +231,13 @@ public class QualityServiceImpl implements QualityService {
         HemorrhageRecord record = new HemorrhageRecord();
         record.setUserId(user.getId());
         String normalizedExamId = normalizeText(examId);
-        record.setPatientName(normalizeText(patientName));
-        record.setPatientCode(resolvePatientCode(patientCode, normalizedExamId));
+        record.setPatientName(resolvedPatientName);
+        record.setPatientCode(resolvePatientCode(resolvedPatientCode, normalizedExamId));
         record.setExamId(normalizedExamId);
-        record.setGender(normalizeText(gender));
-        record.setAge(normalizeAge(age));
-        record.setStudyDate(studyDate);
-        record.setImagePath("uploads/" + filename);
+        record.setGender(resolvedGender);
+        record.setAge(resolvedAge);
+        record.setStudyDate(resolvedStudyDate);
+        record.setImagePath(savedImagePath);
 
         // Translate Prediction to Chinese (Front-end expectation)
         String rawPrediction = String.valueOf(predictionResult.get("prediction"));
@@ -211,26 +289,28 @@ public class QualityServiceImpl implements QualityService {
         predictionResult.put("gender", record.getGender());
         predictionResult.put("age", record.getAge());
         predictionResult.put("study_date", record.getStudyDate());
+        predictionResult.put("source_mode", normalizedSourceMode);
         predictionResult.put("device", HEMORRHAGE_INFERENCE_DEVICE);
         predictionResult.put("model_name", HEMORRHAGE_MODEL_NAME);
         predictionResult.put("scan_region", HEMORRHAGE_SCAN_REGION);
-        predictionResult.put("scanner_model", HEMORRHAGE_SCANNER_MODEL);
+        predictionResult.put("scanner_model", resolvedScannerModel);
 
         // Append image meta and URL for frontend rendering
         try {
-            BufferedImage img = ImageIO.read(destinationFile.toFile());
+            Path imagePath = Paths.get(imagePathForAnalysis);
+            BufferedImage img = ImageIO.read(imagePath.toFile());
             if (img != null) {
                 predictionResult.put("image_width", img.getWidth());
                 predictionResult.put("image_height", img.getHeight());
             }
             // Convert to Base64 for immediate display without static resource config issues
-            byte[] fileContent = Files.readAllBytes(destinationFile);
+            byte[] fileContent = Files.readAllBytes(imagePath);
             String encodedString = Base64.getEncoder().encodeToString(fileContent);
             predictionResult.put("image_base64", encodedString);
         } catch (Exception e) {
             e.printStackTrace();
         }
-        predictionResult.put("image_url", "/uploads/" + filename);
+        predictionResult.put("image_url", "/" + savedImagePath);
 
         // Exclude base64 preview from persisted raw result to keep DB payload compact.
         Map<String, Object> persistedResult = new HashMap<>(predictionResult);
@@ -255,6 +335,16 @@ public class QualityServiceImpl implements QualityService {
         predictionResult.put("updated_at", record.getUpdatedAt());
         predictionResult.put("device", HEMORRHAGE_INFERENCE_DEVICE);
 
+        qualityPatientInfoService.upsertPatientByAccessionNumber(
+                QualityPatientTaskSupport.TASK_TYPE_HEMORRHAGE,
+                record.getPatientCode(),
+                record.getPatientName(),
+                record.getExamId(),
+                record.getGender(),
+                record.getAge(),
+                record.getStudyDate(),
+                record.getImagePath());
+
         return predictionResult;
     }
 
@@ -266,6 +356,94 @@ public class QualityServiceImpl implements QualityService {
      */
     private int normalizeHistoryLimit(Integer limit) {
         return Math.max(1, Math.min(limit, 20));
+    }
+
+    /**
+     * 将 PACS 原始影像复制到本地 uploads 目录，保证历史记录能够稳定回显预览图。
+     *
+     * @param pacsImagePath PACS 原始影像绝对路径
+     * @param examId 检查号
+     * @return 可被前端静态资源访问的相对路径，如 uploads/pacs/xxx.png
+     * @throws IOException 文件复制失败时抛出
+     */
+    private String copyPacsImageToUploads(Path pacsImagePath, String examId) throws IOException {
+        Path pacsUploadDir = rootLocation.resolve("pacs");
+        if (Files.notExists(pacsUploadDir)) {
+            Files.createDirectories(pacsUploadDir);
+        }
+
+        String safeExamId = normalizeText(examId);
+        if (safeExamId == null) {
+            safeExamId = UUID.randomUUID().toString();
+        }
+        safeExamId = safeExamId.replaceAll("[^a-zA-Z0-9_-]", "_");
+
+        String extension = resolveFileExtension(pacsImagePath.getFileName() == null
+                ? ""
+                : pacsImagePath.getFileName().toString());
+        String targetFilename = safeExamId + "_" + UUID.randomUUID() + extension;
+        Path destinationFile = pacsUploadDir.resolve(targetFilename).normalize().toAbsolutePath();
+
+        Files.copy(pacsImagePath, destinationFile, StandardCopyOption.REPLACE_EXISTING);
+        return "uploads/pacs/" + targetFilename;
+    }
+
+    /**
+     * 解析文件扩展名，无法识别时默认回退到 .png。
+     *
+     * @param filename 原始文件名
+     * @return 安全的文件扩展名
+     */
+    private String resolveFileExtension(String filename) {
+        if (filename == null || filename.isBlank() || !filename.contains(".")) {
+            return ".png";
+        }
+
+        String extension = filename.substring(filename.lastIndexOf('.')).toLowerCase(Locale.ROOT);
+        if (extension.matches("\\.(png|jpg|jpeg|bmp)")) {
+            return extension;
+        }
+        return ".png";
+    }
+
+    /**
+     * 返回第一个非空白字符串，用于优先采用请求参数，否则回退到 PACS 缓存字段。
+     *
+     * @param values 候选字符串列表
+     * @return 第一个有效字符串；若均为空则返回 null
+     */
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (String value : values) {
+            String normalizedValue = normalizeText(value);
+            if (normalizedValue != null) {
+                return normalizedValue;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 将 PACS 缓存中的厂商与型号拼接为前端展示用扫描设备名称。
+     *
+     * @param pacsStudy PACS 检查缓存记录
+     * @return 设备名称
+     */
+    private String resolvePacsScannerModel(PacsStudyCache pacsStudy) {
+        if (pacsStudy == null) {
+            return HEMORRHAGE_SCANNER_MODEL;
+        }
+
+        String manufacturer = normalizeText(pacsStudy.getManufacturer());
+        String modelName = normalizeText(pacsStudy.getModelName());
+        String mergedName = Stream.of(manufacturer, modelName)
+                .filter(Objects::nonNull)
+                .reduce((left, right) -> left + " " + right)
+                .orElse(null);
+        return mergedName == null ? HEMORRHAGE_SCANNER_MODEL : mergedName;
     }
 
     private String normalizeText(String value) {
@@ -302,6 +480,27 @@ public class QualityServiceImpl implements QualityService {
 
         record.setPrimaryIssue(HemorrhageIssueSupport.resolvePrimaryIssue(record));
         record.setQcStatus(HemorrhageIssueSupport.resolveQcStatus(record));
+        record.setPatientImagePath(resolvePatientImagePath(record.getExamId(), record.getImagePath()));
+    }
+
+    /**
+     * 根据检查号解析患者信息表中的患者图片路径；若未维护则回退到检测记录自身图片。
+     *
+     * @param examId 检查号
+     * @param fallbackImagePath 检测记录自身图片路径
+     * @return 患者图片路径
+     */
+    private String resolvePatientImagePath(String examId, String fallbackImagePath) {
+        if (examId != null && !examId.isBlank()) {
+            var patientInfo = qualityPatientInfoService.getByAccessionNumber(
+                    QualityPatientTaskSupport.TASK_TYPE_HEMORRHAGE,
+                    examId);
+            if (patientInfo != null && patientInfo.getImagePath() != null && !patientInfo.getImagePath().isBlank()) {
+                return patientInfo.getImagePath();
+            }
+        }
+
+        return fallbackImagePath;
     }
 
 
@@ -364,7 +563,9 @@ public class QualityServiceImpl implements QualityService {
         if (lowerCaseMessage.contains("failed to connect")
                 || lowerCaseMessage.contains("model not loaded")
                 || lowerCaseMessage.contains("timed out")
-                || lowerCaseMessage.contains("cuda")) {
+                || lowerCaseMessage.contains("cuda")
+                || lowerCaseMessage.contains("1011")
+                || lowerCaseMessage.contains("internal error")) {
             return new IllegalStateException("脑出血模型服务暂不可用，请检查模型服务、GPU/CUDA 或稍后重试");
         }
 

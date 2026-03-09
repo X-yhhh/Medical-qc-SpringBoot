@@ -1,0 +1,163 @@
+package com.medical.qc.controller;
+
+import com.medical.qc.bean.QualityPatientInfoSaveReq;
+import com.medical.qc.entity.QualityPatientInfo;
+import com.medical.qc.entity.User;
+import com.medical.qc.service.QualityPatientInfoService;
+import com.medical.qc.support.SessionUserSupport;
+import jakarta.servlet.http.HttpSession;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.time.LocalDate;
+import java.util.Collections;
+import java.util.Map;
+
+/**
+ * 质控项患者信息管理控制器。
+ *
+ * <p>管理员和医生均可访问，用于管理五个质控项的患者信息基础档案。</p>
+ */
+@RestController
+@RequestMapping("/api/v1/patient-info")
+public class QualityPatientInfoController {
+
+    private final QualityPatientInfoService qualityPatientInfoService;
+    private final SessionUserSupport sessionUserSupport;
+
+    public QualityPatientInfoController(QualityPatientInfoService qualityPatientInfoService,
+                                        SessionUserSupport sessionUserSupport) {
+        this.qualityPatientInfoService = qualityPatientInfoService;
+        this.sessionUserSupport = sessionUserSupport;
+    }
+
+    /**
+     * 分页查询患者信息列表。
+     */
+    @GetMapping("/{taskType}")
+    public ResponseEntity<?> getPatientPage(@PathVariable("taskType") String taskType,
+                                            @RequestParam(value = "keyword", required = false) String keyword,
+                                            @RequestParam(value = "patient_id", required = false) String patientId,
+                                            @RequestParam(value = "patient_name", required = false) String patientName,
+                                            @RequestParam(value = "accession_number", required = false) String accessionNumber,
+                                            @RequestParam(value = "page", required = false) Integer page,
+                                            @RequestParam(value = "limit", required = false) Integer limit,
+                                            HttpSession session) {
+        requireAuthenticatedOperator(session);
+        Map<String, Object> response = qualityPatientInfoService.getPatientPage(
+                taskType,
+                keyword,
+                patientId,
+                patientName,
+                accessionNumber,
+                page,
+                limit);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 新增患者信息。
+     */
+    @PostMapping(value = "/{taskType}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> createPatient(@PathVariable("taskType") String taskType,
+                                           @RequestParam(value = "patient_id", required = false) String patientId,
+                                           @RequestParam(value = "patient_name") String patientName,
+                                           @RequestParam(value = "accession_number") String accessionNumber,
+                                           @RequestParam(value = "gender", required = false) String gender,
+                                           @RequestParam(value = "age", required = false) Integer age,
+                                           @RequestParam(value = "study_date", required = false)
+                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate studyDate,
+                                           @RequestParam(value = "remark", required = false) String remark,
+                                           @RequestParam(value = "image_file", required = false) MultipartFile imageFile,
+                                           HttpSession session) {
+        requireAuthenticatedOperator(session);
+        QualityPatientInfo createdPatient = qualityPatientInfoService.createPatient(
+                taskType,
+                buildSaveRequest(patientId, patientName, accessionNumber, gender, age, studyDate, remark),
+                imageFile);
+        return ResponseEntity.ok(Collections.singletonMap("data", createdPatient));
+    }
+
+    /**
+     * 更新患者信息。
+     */
+    @PutMapping(value = "/{taskType}/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<?> updatePatient(@PathVariable("taskType") String taskType,
+                                           @PathVariable("id") Long id,
+                                           @RequestParam(value = "patient_id", required = false) String patientId,
+                                           @RequestParam(value = "patient_name") String patientName,
+                                           @RequestParam(value = "accession_number") String accessionNumber,
+                                           @RequestParam(value = "gender", required = false) String gender,
+                                           @RequestParam(value = "age", required = false) Integer age,
+                                           @RequestParam(value = "study_date", required = false)
+                                           @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate studyDate,
+                                           @RequestParam(value = "remark", required = false) String remark,
+                                           @RequestParam(value = "image_file", required = false) MultipartFile imageFile,
+                                           HttpSession session) {
+        requireAuthenticatedOperator(session);
+        QualityPatientInfo updatedPatient = qualityPatientInfoService.updatePatient(
+                taskType,
+                id,
+                buildSaveRequest(patientId, patientName, accessionNumber, gender, age, studyDate, remark),
+                imageFile);
+        return ResponseEntity.ok(Collections.singletonMap("data", updatedPatient));
+    }
+
+    /**
+     * 删除患者信息。
+     */
+    @DeleteMapping("/{taskType}/{id}")
+    public ResponseEntity<?> deletePatient(@PathVariable("taskType") String taskType,
+                                           @PathVariable("id") Long id,
+                                           HttpSession session) {
+        requireAuthenticatedOperator(session);
+        qualityPatientInfoService.deletePatient(taskType, id);
+        return ResponseEntity.ok(Collections.singletonMap("message", "患者信息删除成功"));
+    }
+
+    /**
+     * 从 PACS 缓存批量初始化当前质控项的患者信息表。
+     */
+    @PostMapping("/{taskType}/sync-from-pacs")
+    public ResponseEntity<?> syncPatientsFromPacs(@PathVariable("taskType") String taskType,
+                                                  HttpSession session) {
+        requireAuthenticatedOperator(session);
+        Map<String, Object> response = qualityPatientInfoService.syncPatientsFromPacs(taskType);
+        return ResponseEntity.ok(Collections.singletonMap("data", response));
+    }
+
+    /**
+     * 校验当前会话已登录，且仅允许管理员或医生访问。
+     */
+    private User requireAuthenticatedOperator(HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        if (!sessionUserSupport.isAdmin(user) && !sessionUserSupport.isDoctor(user)) {
+            throw new IllegalArgumentException("当前账号无权访问患者信息管理功能");
+        }
+        return user;
+    }
+
+    /**
+     * 将 multipart 表单参数组装为统一请求对象。
+     */
+    private QualityPatientInfoSaveReq buildSaveRequest(String patientId,
+                                                       String patientName,
+                                                       String accessionNumber,
+                                                       String gender,
+                                                       Integer age,
+                                                       LocalDate studyDate,
+                                                       String remark) {
+        QualityPatientInfoSaveReq request = new QualityPatientInfoSaveReq();
+        request.setPatientId(patientId);
+        request.setPatientName(patientName);
+        request.setAccessionNumber(accessionNumber);
+        request.setGender(gender);
+        request.setAge(age);
+        request.setStudyDate(studyDate);
+        request.setRemark(remark);
+        return request;
+    }
+}

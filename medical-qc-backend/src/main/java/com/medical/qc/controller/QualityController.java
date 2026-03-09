@@ -85,19 +85,20 @@ public class QualityController {
     /**
      * 脑出血 AI 智能检测。
      *
-     * @param file 上传的 CT 影像
+     * @param file 上传的 CT 影像（本地模式必传）
      * @param patientName 患者姓名
      * @param patientCode 患者编号
      * @param examId 检查 ID
      * @param gender 性别
      * @param age 年龄
      * @param studyDate 检查日期
+     * @param sourceMode 数据来源模式：local/pacs
      * @param session 当前会话
      * @return 检测结果（包含是否出血、概率、中线偏移等）
      */
     @PostMapping("/hemorrhage")
     public ResponseEntity<?> analyzeHemorrhage(
-            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "file", required = false) MultipartFile file,
             @RequestParam(value = "patient_name", required = false) String patientName,
             @RequestParam(value = "patient_code", required = false) String patientCode,
             @RequestParam(value = "exam_id", required = false) String examId,
@@ -105,6 +106,7 @@ public class QualityController {
             @RequestParam(value = "age", required = false) Integer age,
             @RequestParam(value = "study_date", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate studyDate,
+            @RequestParam(value = "source_mode", defaultValue = "local") String sourceMode,
             HttpSession session) throws IOException {
 
         User user = requireDoctorSession(session);
@@ -116,7 +118,8 @@ public class QualityController {
                 examId,
                 gender,
                 age,
-                studyDate);
+                studyDate,
+                sourceMode);
         return ResponseEntity.ok(result);
     }
 

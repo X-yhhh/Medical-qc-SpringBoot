@@ -132,7 +132,8 @@
         <el-table-column prop="patientName" label="患者信息" width="160">
           <template #default="{ row }">
             <div class="patient-cell">
-              <el-avatar :size="28" class="patient-avatar">{{ row.patientName?.charAt(0) }}</el-avatar>
+              <el-avatar v-if="row.imageUrl" :size="28" :src="row.imageUrl" class="patient-avatar" />
+              <el-avatar v-else :size="28" class="patient-avatar">{{ row.patientName?.charAt(0) }}</el-avatar>
               <div class="patient-detail">
                 <span class="name">{{ row.patientName }}</span>
                 <span class="exam-id">{{ row.examId }}</span>

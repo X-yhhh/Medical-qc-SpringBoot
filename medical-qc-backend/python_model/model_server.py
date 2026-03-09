@@ -140,6 +140,17 @@ async def handle_connection(websocket):
     try:
         async for message in websocket:
             data = json.loads(message)
+
+            # 健康检查请求仅用于后端启动阶段确认模型服务是否可用，
+            # 不触发真实推理，也不依赖影像路径。
+            if data.get("health_check"):
+                await websocket.send(json.dumps({
+                    "status": "ok",
+                    "model_loaded": model is not None,
+                    "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU"
+                }))
+                continue
+
             image_path = data.get("image_path")
             
             print(f"Received request for: {image_path}")
