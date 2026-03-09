@@ -60,6 +60,7 @@
 *   **Node.js**: 16+
 *   **Python**: 3.10+ (需安装 `torch` 等依赖)
 *   **MySQL**: 8.0+
+*   **ActiveMQ**: 5.16.6+（本项目默认连接 `tcp://127.0.0.1:61616`）
 *   **GPU**: NVIDIA 显卡 (推荐，需安装 CUDA 驱动以启用模型加速)
 
 ### 2. 数据库设置
@@ -79,6 +80,9 @@
 # 进入后端目录
 cd medical-qc-backend
 
+# 启动 ActiveMQ（Windows PowerShell）
+powershell -ExecutionPolicy Bypass -File .\scripts\activemq.ps1 -Action start
+
 # 安装 Python 依赖 (仅首次)
 cd python_model
 pip install -r requirements.txt
@@ -90,6 +94,44 @@ mvn spring-boot:run
 ```
 *   后端服务端口: `8080`
 *   Python 模型服务端口: `8765` (自动管理)
+*   ActiveMQ Broker 端口: `61616`
+*   ActiveMQ 管理台: `http://127.0.0.1:8161/admin`（默认账户通常为 `admin/admin`）
+
+### 3.1 ActiveMQ 接入说明
+后端已引入 ActiveMQ，并将“脑出血检测结果入库后同步异常工单”改为消息驱动：
+
+*   生产者位置：`medical-qc-backend/src/main/java/com/medical/qc/service/impl/QualityServiceImpl.java`
+*   消息分发器：`medical-qc-backend/src/main/java/com/medical/qc/messaging/HemorrhageIssueSyncDispatcher.java`
+*   消费者位置：`medical-qc-backend/src/main/java/com/medical/qc/messaging/HemorrhageIssueSyncConsumer.java`
+*   队列名：`qc.hemorrhage.issue.sync`
+
+其余四个 mock 质控模块也已改为 ActiveMQ 异步任务模式：
+
+*   提交任务后返回 `taskId`，不再直接同步返回 mock 结果
+*   统一轮询接口：`GET /api/v1/quality/tasks/{taskId}`
+*   提交参数统一支持：`file`、`patient_name`、`exam_id`、`source_mode`
+*   mock 任务队列：`qc.mock.quality.task`
+*   任务服务：`medical-qc-backend/src/main/java/com/medical/qc/service/impl/MockQualityTaskServiceImpl.java`
+*   任务消费者：`medical-qc-backend/src/main/java/com/medical/qc/messaging/MockQualityTaskConsumer.java`
+
+对应的四个提交接口为：
+
+*   `POST /api/v1/quality/head/detect`
+*   `POST /api/v1/quality/chest-non-contrast/detect`
+*   `POST /api/v1/quality/chest-contrast/detect`
+*   `POST /api/v1/quality/coronary-cta/detect`
+
+说明：
+
+*   本地上传模式：`source_mode=local`，必须传 `file`
+*   PACS 模拟模式：`source_mode=pacs`，可不传 `file`，但仍需传 `patient_name` 与 `exam_id`
+
+如果 ActiveMQ 未启动或消息发送失败：
+
+*   脑出血模块的“异常工单同步”会回退到原有同步逻辑
+*   其余四个 mock 质控任务会回退到本地异步线程池执行
+
+另外，后端启动时会自动检测并拉起本机 ActiveMQ Broker（默认路径为 `D:\activemq\apache-activemq-5.16.6-bin\apache-activemq-5.16.6`），随后再启动 JMS 消费监听器；如果 broker 原本已在外部运行，后端不会重复启动，也不会在退出时误停外部 broker。
 
 ### 4. 前端启动 (`medical-qc-frontend`)
 

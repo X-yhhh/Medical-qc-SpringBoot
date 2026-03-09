@@ -3,174 +3,129 @@
 // ----------------------------------------------------------------------------------
 // @file src/api/quality.js
 // @description 封装质控模块所有与后端交互的 API 请求。
-//              包含真实 AI 算法接口（脑出血）和用于演示的模拟接口（其他质控项）。
+//              包含真实 AI 算法接口（脑出血）以及基于 ActiveMQ 的异步质控任务接口。
 // @module API/Quality
-//
-// 对应后端服务:
-// - Base URL: /api/v1/quality
-// - 路由文件: app/api/v1/quality.py (Python Backend)
 // ----------------------------------------------------------------------------------
 
 import request from '@/utils/request'
 
-// ==================================================================================
-// 1. 模拟接口 (Mock APIs)
-// 作用：用于前端演示和开发，暂未接入真实后端算法服务。
-// ==================================================================================
+const QUALITY_TASK_POLL_PREFIX = '/quality/tasks/'
 
-/**
- * @function detectHead
- * @description [MOCK] 模拟 CT 头部平扫质控检测
- * @param {File} file - 上传的影像文件 (虽然是模拟，但保留接口签名一致性)
- * @returns {Promise<Object>} 返回包含质控问题列表和耗时的 Promise
- *
- * @backend-api (Pending) POST /api/v1/quality/head/detect
- */
-export const detectHead = (file) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        issues: [
-          { item: '运动伪影', status: Math.random() > 0.7 ? '不合格' : '合格' },
-          { item: '金属伪影', status: Math.random() > 0.8 ? '不合格' : '合格' },
-          { item: 'FOV过大', status: Math.random() > 0.6 ? '不合格' : '合格' },
-          { item: 'FOV过小', status: Math.random() > 0.5 ? '不合格' : '合格' },
-          { item: '层厚不当', status: Math.random() > 0.4 ? '不合格' : '合格' }
-        ],
-        duration: Math.floor(800 + Math.random() * 500)
-      })
-    }, 1200)
-  })
-}
-
-/**
- * @function detectChestNonContrast
- * @description [MOCK] 模拟 CT 胸部平扫质控检测
- * @param {File} file - 上传的影像文件
- * @returns {Promise<Object>} 返回包含质控问题列表和耗时的 Promise
- *
- * @backend-api (Pending) POST /api/v1/quality/chest-non-contrast/detect
- */
-export const detectChestNonContrast = (file) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        issues: [
-          { item: '呼吸伪影', status: Math.random() > 0.6 ? '不合格' : '合格' },
-          { item: '体外金属', status: Math.random() > 0.8 ? '不合格' : '合格' },
-          { item: '扫描范围不全', status: Math.random() > 0.5 ? '不合格' : '合格' }
-        ],
-        duration: Math.floor(900 + Math.random() * 400)
-      })
-    }, 1300)
-  })
-}
-
-/**
- * @function detectChestContrast
- * @description [MOCK] 模拟 CT 胸部增强质控检测
- * @param {File} file - 上传的影像文件
- * @returns {Promise<Object>} 返回包含质控问题列表和耗时的 Promise
- *
- * @backend-api (Pending) POST /api/v1/quality/chest-contrast/detect
- */
-export const detectChestContrast = (file) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        issues: [
-          { item: '分期错误', status: Math.random() > 0.7 ? '不合格' : '合格' },
-          { item: '增强时机不当', status: Math.random() > 0.6 ? '不合格' : '合格' },
-          { item: 'FOV过小', status: Math.random() > 0.4 ? '不合格' : '合格' }
-        ],
-        duration: Math.floor(1000 + Math.random() * 600)
-      })
-    }, 1400)
-  })
-}
-
-/**
- * @function detectCoronaryCTA
- * @description [MOCK] 模拟冠脉 CTA 质控检测
- * @param {File} file - 上传的影像文件
- * @returns {Promise<Object>} 返回包含质控问题列表和耗时的 Promise
- *
- * @backend-api (Pending) POST /api/v1/quality/coronary-cta/detect
- */
-export const detectCoronaryCTA = (file) => {
-  return new Promise((resolve) => {
-    setTimeout(() => {
-      resolve({
-        issues: [
-          { item: '血管强化不足', status: Math.random() > 0.5 ? '不合格' : '合格' },
-          { item: '噪声过大', status: Math.random() > 0.6 ? '不合格' : '合格' },
-          { item: '心电门控失败', status: Math.random() > 0.7 ? '不合格' : '合格' }
-        ],
-        duration: Math.floor(1200 + Math.random() * 800)
-      })
-    }, 1600)
-  })
-}
-
-// ==================================================================================
-// 2. 真实接口 (Real APIs)
-// 作用：对接真实后端 AI 算法服务
-// ==================================================================================
-
-/**
- * @function predictHemorrhage
- * @description 脑出血智能检测 (Real AI Service)
- * @param {File} file - PNG/JPG/JPEG/BMP 图片文件
- * @param {Object} metadata - 额外的元数据 (如患者姓名、检查ID)
- * @returns {Promise<Object>} 后端返回的检测结果
- *
- * @backend-api POST /api/v1/quality/hemorrhage
- * @note 使用 multipart/form-data 格式上传
- */
-export const predictHemorrhage = async (file, metadata = {}) => {
+const buildTaskFormData = ({ file, patientName, examId, sourceMode }) => {
   const formData = new FormData()
-  formData.append('file', file)
-  // Ensure keys match backend @RequestParam exactly
-  if (metadata.patientName) formData.append('patient_name', metadata.patientName)
-  if (metadata.examId) formData.append('exam_id', metadata.examId)
+  if (file) {
+    formData.append('file', file)
+  }
+  formData.append('patient_name', patientName || '')
+  formData.append('exam_id', examId || '')
+  formData.append('source_mode', sourceMode || 'local')
+  return formData
+}
 
+const parseRequestError = (error, defaultMessage) => {
+  console.error(defaultMessage, error)
+
+  const detailMessage = error.response?.data?.detail
+  if (detailMessage) {
+    return new Error(detailMessage)
+  }
+
+  if (error.response) {
+    return new Error(`后端返回错误: ${error.response.status} ${error.response.statusText}`)
+  }
+  if (error.request) {
+    return new Error('网络错误：无法连接到后端服务')
+  }
+  return new Error(`${defaultMessage}: ${error.message}`)
+}
+
+const submitQualityTask = async (endpoint, payload, actionLabel) => {
   try {
-    const response = await request.post('/quality/hemorrhage', formData, {
+    return await request.post(endpoint, buildTaskFormData(payload), {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
     })
-    return response // request.js 响应拦截器已处理 data
   } catch (error) {
-    console.error('脑出血检测失败:', error)
-
-    const detailMessage = error.response?.data?.detail
-    if (detailMessage) {
-      throw new Error(detailMessage)
-    }
-
-    if (error.response) {
-      throw new Error(`后端返回错误: ${error.response.status} ${error.response.statusText}`)
-    } else if (error.request) {
-      throw new Error('网络错误：无法连接到后端服务')
-    } else {
-      throw new Error(`请求配置错误: ${error.message}`)
-    }
+    throw parseRequestError(error, actionLabel)
   }
 }
 
 /**
- * @function getHemorrhageHistory
- * @description 获取脑出血质控历史记录
- * @param {number} limit - 获取记录的数量限制
- * @returns {Promise<Object>} 历史记录列表
- *
- * @backend-api GET /api/v1/quality/hemorrhage/history
+ * 提交 CT 头部平扫异步质控任务。
+ */
+export const detectHead = (payload) => {
+  return submitQualityTask('/quality/head/detect', payload, '提交头部质控任务失败')
+}
+
+/**
+ * 提交 CT 胸部平扫异步质控任务。
+ */
+export const detectChestNonContrast = (payload) => {
+  return submitQualityTask('/quality/chest-non-contrast/detect', payload, '提交胸部平扫质控任务失败')
+}
+
+/**
+ * 提交 CT 胸部增强异步质控任务。
+ */
+export const detectChestContrast = (payload) => {
+  return submitQualityTask('/quality/chest-contrast/detect', payload, '提交胸部增强质控任务失败')
+}
+
+/**
+ * 提交冠脉 CTA 异步质控任务。
+ */
+export const detectCoronaryCTA = (payload) => {
+  return submitQualityTask('/quality/coronary-cta/detect', payload, '提交冠脉 CTA 质控任务失败')
+}
+
+/**
+ * 查询异步质控任务状态与结果。
+ */
+export const getQualityTask = async (taskId) => {
+  try {
+    return await request.get(`${QUALITY_TASK_POLL_PREFIX}${taskId}`)
+  } catch (error) {
+    throw parseRequestError(error, '查询质控任务失败')
+  }
+}
+
+// ==================================================================================
+// 真实接口 (Real APIs)
+// ==================================================================================
+
+/**
+ * 脑出血智能检测 (Real AI Service)
+ */
+export const predictHemorrhage = async (file, metadata = {}) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (metadata.patientName) formData.append('patient_name', metadata.patientName)
+  if (metadata.patientCode) formData.append('patient_code', metadata.patientCode)
+  if (metadata.examId) formData.append('exam_id', metadata.examId)
+  if (metadata.gender) formData.append('gender', metadata.gender)
+  if (metadata.age !== null && metadata.age !== undefined && metadata.age !== '') {
+    formData.append('age', metadata.age)
+  }
+  if (metadata.studyDate) formData.append('study_date', metadata.studyDate)
+
+  try {
+    return await request.post('/quality/hemorrhage', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    })
+  } catch (error) {
+    throw parseRequestError(error, '脑出血检测失败')
+  }
+}
+
+/**
+ * 获取脑出血质控历史记录。
  */
 export const getHemorrhageHistory = async (limit = 20) => {
   try {
-    const response = await request.get('/quality/hemorrhage/history', { params: { limit } })
-    return response
+    return await request.get('/quality/hemorrhage/history', { params: { limit } })
   } catch (error) {
     console.error('获取历史记录失败', error)
     return { data: [] }
@@ -178,17 +133,11 @@ export const getHemorrhageHistory = async (limit = 20) => {
 }
 
 /**
- * @function getHemorrhageRecord
- * @description 获取指定的出血检测历史记录详情
- * @param {number|string} recordId - 历史记录 ID
- * @returns {Promise<Object>} 接口响应结果
- *
- * @backend-api GET /api/v1/quality/hemorrhage/history/{recordId}
+ * 获取指定的出血检测历史记录详情。
  */
 export const getHemorrhageRecord = async (recordId) => {
   try {
-    const response = await request.get(`/quality/hemorrhage/history/${recordId}`)
-    return response
+    return await request.get(`/quality/hemorrhage/history/${recordId}`)
   } catch (error) {
     console.error('获取指定出血检测历史记录失败', error)
     throw error

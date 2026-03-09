@@ -1,15 +1,15 @@
-<!--
+﻿<!--
   @file src/views/quality/Head.vue
   @description CT头部平扫质控主页面
   主要功能:
-  1. 影像上传: 支持本地 DICOM 文件夹拖拽上传和 PACS 系统模拟拉取
-  2. AI 智能分析: 展示分析进度、当前步骤和实时日志
-  3. 结果展示: 患者信息、质控评分、质控项列表
-  4. 交互: 重新分析、导出报告、查看详情
+  1. 影像上传: 支持本地影像上传和 PACS 模拟调取。
+  2. 异步分析: 提交后端质控任务，前端自动轮询任务状态并展示进度。
+  3. 结果展示: 患者信息、质控评分、质控项列表。
+  4. 交互: 重新分析、导出报告、查看详情。
 
   @backend-api 对接接口:
-  - [POST] /api/v1/quality/head/detect (模拟: detectHead) - 头部质控检测
-  - [GET] /api/v1/quality/head/report/export (模拟) - 导出报告
+  - [POST] /api/v1/quality/head/detect - 提交头部质控异步任务
+  - [GET] /api/v1/quality/tasks/{taskId} - 轮询任务结果
 -->
 <template>
   <div class="head-qc-container">
@@ -321,7 +321,7 @@
             :show-file-list="true"
             :limit="1"
             :on-change="handleDialogFileChange"
-            :on-remove="() => (selectedFile = null)"
+            :on-remove="handleDialogFileRemove"
             style="width: 100%"
             accept=".dcm"
           >
@@ -351,336 +351,100 @@
 </template>
 
 <script setup>
-/**
- * @file Head.vue
- * @description CT头部平扫质控主页面逻辑
- * 包含影像上传（本地/PACS）、AI分析进度展示、质控结果报告展示。
- *
- * @api-dependencies
- * - src/api/quality.js: detectHead (Mock)
- */
+import { computed } from 'vue'
+import {
+  User,
+  Upload,
+  Refresh,
+  Download,
+  FolderOpened,
+  Connection,
+  InfoFilled,
+  Aim,
+  Picture,
+  UploadFilled,
+  List,
+  CircleCheckFilled,
+  WarningFilled,
+  ArrowRight,
+  ArrowLeft,
+} from '@element-plus/icons-vue'
+import { detectHead } from '@/api/quality'
+import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
 
-import { ref, computed, onMounted, nextTick, reactive } from 'vue'
-import { ElMessage } from 'element-plus'
-import { User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight, ArrowLeft } from '@element-plus/icons-vue'
-
-// ==========================================
-// 状态定义
-// ==========================================
-
-// 分析状态控制
-const analyzing = ref(false)
-const analyzeProgress = ref(0) // 进度条百分比
-const currentAnalysisStep = ref('准备就绪')
-const analysisLogs = ref([]) // 实时日志队列
-
-// 弹窗与详情展示
-const dialogVisible = ref(false)
-const currentItem = ref(null) // 当前查看的质控项详情
-
-// 上传弹窗相关状态
-const uploadDialogVisible = ref(false)
-const uploadMode = ref('local') // 上传模式: 'local' | 'pacs'
-const uploadFormRef = ref(null)
-const uploadForm = reactive({
-  patientName: '',
-  examId: '',
-})
-const selectedFile = ref(null)
-
-// 表单校验规则
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
 }
 
-// 质控结果数据 (模拟)
-const qcItems = ref([])
-const patientInfo = ref({
-  name: '',
-  gender: '',
-  age: 0,
-  studyId: '',
-  accessionNumber: '',
-  studyDate: '',
-  device: '',
-  sliceCount: 0,
-  sliceThickness: 0,
-})
-
-// ==========================================
-// 业务逻辑函数
-// ==========================================
-
-/**
- * 打开上传配置弹窗
- * @param {string} mode - 'local' 或 'pacs'
- */
-const openUploadDialog = (mode = 'local') => {
-  uploadMode.value = mode
-  uploadForm.patientName = ''
-  uploadForm.examId = ''
-  selectedFile.value = null
-  uploadDialogVisible.value = true
-}
-
-/**
- * 处理文件选择变更
- * @param {File} file - ElementPlus upload 组件返回的文件对象
- */
-const handleDialogFileChange = (file) => {
-  selectedFile.value = file
-}
-
-/**
- * 提交上传并启动分析流程
- * 验证表单 -> 模拟上传/PACS连接 -> 启动分析动画
- */
-const submitUpload = async () => {
-  if (!uploadFormRef.value) return
-
-  await uploadFormRef.value.validate(async (valid) => {
-    if (valid) {
-      // 本地上传模式下，必须选择文件
-      if (uploadMode.value === 'local' && !selectedFile.value) {
-        ElMessage.warning('请上传影像文件')
-        return
-      }
-
-      // PACS 模式下，模拟通知后端拉取
-      if (uploadMode.value === 'pacs') {
-        ElMessage.info(`正在通知后端从 PACS 拉取 ID: ${uploadForm.examId} 的数据...`)
-      }
-
-      // 关闭弹窗
-      uploadDialogVisible.value = false
-      // 开始分析流程
-      await startAnalysisProcess()
-    }
-  })
-}
-
-/**
- * 模拟 PACS 选择操作
- * 演示自动填充患者信息并打开确认弹窗
- */
-const simulatePacsSelect = () => {
-  ElMessage.success('已连接 PACS 系统，正在检索今日检查列表...')
-
-  setTimeout(() => {
-    uploadForm.patientName = '王某某'
-    uploadForm.examId = 'PACS_AUTO_20231024'
-    selectedFile.value = null
-
-    uploadMode.value = 'pacs'
-    uploadDialogVisible.value = true
-
-    ElMessage.success('已自动获取 PACS 影像信息，请确认')
-  }, 500)
-}
-
-/**
- * 添加实时日志
- * @param {string} msg - 日志内容
- */
-const addLog = (msg) => {
-  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  analysisLogs.value.unshift({ time, message: msg })
-  if (analysisLogs.value.length > 5) analysisLogs.value.pop()
-}
-
-/**
- * @function startAnalysisProcess
- * @description 模拟 AI 分析全流程
- * 包含：DICOM解析 -> 完整性校验 -> 元数据提取 -> 模型加载 -> 特征提取 -> 报告生成
- *
- * @backend-api [WebSocket] /ws/quality/head/progress (模拟) - 获取分析进度
- */
-const startAnalysisProcess = async () => {
-  // 1. 初始化状态
-  qcItems.value = []
-  patientInfo.value = { name: '' }
-  analyzing.value = true
-  analyzeProgress.value = 0
-  analysisLogs.value = []
-
-  // 2. 定义分析步骤序列
-  const steps = [
+const {
+  analyzing,
+  analyzeProgress,
+  currentAnalysisStep,
+  analysisLogs,
+  dialogVisible,
+  currentItem,
+  uploadDialogVisible,
+  uploadMode,
+  uploadFormRef,
+  uploadForm,
+  selectedFile,
+  qcItems,
+  patientInfo,
+  openUploadDialog,
+  handleDialogFileChange,
+  handleDialogFileRemove,
+  submitUpload,
+  simulatePacsSelect,
+  resetUpload,
+  viewDetails,
+  handleReanalyze,
+  handleExport,
+} = useAsyncQualityTaskPage({
+  submitTask: detectHead,
+  initialPatientInfo: {
+    name: '',
+    gender: '',
+    age: 0,
+    studyId: '',
+    accessionNumber: '',
+    studyDate: '',
+    device: '',
+    sliceCount: 0,
+    sliceThickness: 0,
+  },
+  pacsPreset: {
+    patientName: '王某某',
+    examId: 'PACS_AUTO_20231024',
+  },
+  analysisSteps: (form) => [
     { progress: 10, msg: '正在读取 DICOM 文件头信息...', step: 'DICOM 解析' },
     { progress: 30, msg: '校验序列完整性 (240/240 slices)...', step: '完整性校验' },
-    {
-      progress: 45,
-      msg: `提取患者元数据: ${uploadForm.patientName || '未知'}, ...`,
-      step: '元数据提取',
-    },
+    { progress: 45, msg: `提取患者元数据: ${form.patientName || '未知'}, ...`, step: '元数据提取', prefillPatientInfo: true },
     { progress: 60, msg: 'AI 模型加载中 (Head_CT_QC_v2.1)...', step: '模型加载' },
     { progress: 80, msg: '正在检测运动伪影与金属伪影...', step: '特征提取' },
     { progress: 95, msg: '生成结构化质控报告...', step: '报告生成' },
-    { progress: 100, msg: '分析完成', step: '完成' },
-  ]
-
-  // 3. 执行步骤模拟
-  for (const step of steps) {
-    await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 200))
-    analyzeProgress.value = step.progress
-    currentAnalysisStep.value = step.step
-    addLog(step.msg)
-
-    // 在元数据提取阶段填充模拟患者数据
-    if (step.progress === 45) {
-      patientInfo.value = {
-        name: uploadForm.patientName || '自动提取中...',
-        gender: Math.random() > 0.5 ? '男' : '女',
-        age: 40 + Math.floor(Math.random() * 40),
-        studyId: uploadForm.examId || 'UNKNOWN',
-        accessionNumber: 'ACC' + Math.floor(Math.random() * 100000),
-        studyDate: new Date().toLocaleString(),
-        device: 'GE Revolution CT',
-        sliceCount: 240,
-        sliceThickness: 5.0,
-      }
-    }
-  }
-
-  // 4. 获取最终质控结果 (模拟 API 调用)
-  await fetchQCData()
-}
-
-/**
- * 计算逻辑
- */
-// 异常项计数
-const abnormalCount = computed(() => {
-  return qcItems.value.filter((item) => item.status === '不合格').length
+  ],
+  pacsLoadingMessage: '已连接 PACS 系统，正在检索今日检查列表...',
+  pacsReadyMessage: '已自动获取 PACS 影像信息，请确认',
+  reanalyzeStartMessage: '正在请求云端 AI 重新分析...',
+  reanalyzeSuccessMessage: '分析完成，数据已更新',
+  exportMessage: '质控报告已生成并开始下载',
 })
 
-// 质控总分计算 (加权算法占位，目前为简单百分比)
+const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
+
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
-// 分数颜色映射
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
   return '#F56C6C'
 })
-
-/**
- * @function fetchQCData
- * @description 获取质控检测结果数据
- * @returns {Promise<void>} 更新 qcItems 状态
- *
- * @backend-api [POST] /api/v1/quality/head/detect (对应前端 mock API: detectHead)
- */
-const fetchQCData = async () => {
-  analyzing.value = true
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 300))
-
-  // 模拟数据生成 logic moved here or imported
-  // 在真实对接中，此处应调用:
-  // const res = await detectHead(selectedFile.value)
-  // qcItems.value = res.issues
-
-  // 恢复之前的模拟数据逻辑 (为了保持演示效果，这里暂时硬编码生成)
-  qcItems.value = [
-    {
-      name: '扫描覆盖范围',
-      status: '合格',
-      description: '扫描范围应覆盖从颅底至颅顶完整区域',
-      detail: '',
-    },
-    {
-      name: '体位不正',
-      status: '合格',
-      description: '正中矢状面应与扫描架中心线重合',
-      detail: '',
-    },
-    {
-      name: '运动伪影',
-      status: Math.random() > 0.8 ? '不合格' : '合格',
-      description: '图像中不应出现因患者运动导致的模糊或重影',
-      detail: '检测到明显层间错位，建议固定头部后重新扫描',
-    },
-    {
-      name: '金属伪影',
-      status: Math.random() > 0.9 ? '不合格' : '合格',
-      description: '应避免假牙、发卡等金属异物干扰',
-      detail: '颅底区域存在放射状金属伪影，影响后颅窝观察',
-    },
-    {
-      name: '层厚层间距',
-      status: '合格',
-      description: '常规扫描层厚应≤5mm',
-      detail: '',
-    },
-    {
-      name: '剂量控制 (CTDI)',
-      status: '合格',
-      description: 'CTDIvol 应低于参考水平 (60 mGy)',
-      detail: '',
-    },
-  ]
-
-  analyzing.value = false
-}
-
-/**
- * @function handleReanalyze
- * @description 触发重新分析流程
- * 调用 fetchQCData 获取最新的质控结果
- *
- * @backend-api [POST] /api/v1/quality/head/detect (复用检测接口)
- */
-const handleReanalyze = () => {
-  ElMessage.info('正在请求云端 AI 重新分析...')
-  fetchQCData().then(() => {
-    ElMessage.success('分析完成，数据已更新')
-  })
-}
-
-/**
- * @function handleExport
- * @description 导出质控报告
- *
- * @backend-api [GET] /api/v1/quality/head/report/export (模拟)
- */
-const handleExport = () => {
-  ElMessage.success('质控报告已生成并开始下载')
-}
-
-/**
- * @function viewDetails
- * @description 查看质控项详情
- * @param {Object} item - 选中的质控项数据
- */
-const viewDetails = (item) => {
-  currentItem.value = item
-  dialogVisible.value = true
-}
-
-/**
- * @function ignoreIssue
- * @description 忽略特定的质控异常
- * @param {Object} item - 质控项
- *
- * @backend-api [POST] /api/v1/quality/head/issue/ignore (计划中)
- */
-const ignoreIssue = (item) => {
-  item.status = '合格'
-  ElMessage.success(`已忽略 "${item.name}" 的异常标记`)
-}
-
-/**
- * @function resetUpload
- * @description 重置页面状态至初始上传界面
- */
-const resetUpload = () => {
-  openUploadDialog()
-}
 </script>
 
 <style scoped>
@@ -1174,3 +938,5 @@ const resetUpload = () => {
   }
 }
 </style>
+
+

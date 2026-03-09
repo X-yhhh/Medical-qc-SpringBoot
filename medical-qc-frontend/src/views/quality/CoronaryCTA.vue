@@ -1,20 +1,15 @@
-<!--
+﻿<!--
   @file src/views/quality/CoronaryCTA.vue
   @description 冠脉CTA智能质控视图
   主要功能：
-  1. 影像上传：支持本地DICOM文件夹拖拽上传和PACS系统模拟拉取。
-  2. AI智能分析：展示分析进度、当前步骤和实时日志（模拟）。
-  3. 结果展示：
-     - 患者检查信息卡片（包含冠脉CTA特有参数：心率、心率波动、重建相位等）
-     - 质控评分仪表盘
-     - 异常项汇总
-     - 详细质控检测项列表（心率控制、血管强化、血管显示等）
-  4. 详情查看：点击质控项查看详细分析结果和影像快照（Mock）。
+  1. 影像上传：支持本地影像上传和 PACS 模拟调取。
+  2. 异步分析：提交后端质控任务，前端自动轮询任务状态并展示进度。
+  3. 结果展示：冠脉 CTA 特有参数、质控评分和详细质控项列表。
+  4. 详情查看：点击质控项查看详细分析结果。
 
   @backend-api
-  - [MOCK] detectCoronaryCTA: 模拟冠脉质控检测 (src/api/quality.js)
-  - (Planned) POST /api/v1/quality/coronary-cta/detect: 真实后端检测接口
-  - (Simulated) WebSocket /ws/quality/coronary-cta/progress: 实时分析进度推送
+  - [POST] /api/v1/quality/coronary-cta/detect: 提交冠脉 CTA 异步质控任务
+  - [GET] /api/v1/quality/tasks/{taskId}: 轮询任务结果
 -->
 <template>
   <div class="coronary-qc-container">
@@ -325,7 +320,7 @@
             :show-file-list="true"
             :limit="1"
             :on-change="handleDialogFileChange"
-            :on-remove="() => (selectedFile = null)"
+            :on-remove="handleDialogFileRemove"
             style="width: 100%"
             accept=".dcm"
           >
@@ -354,398 +349,87 @@
 </template>
 
 <script setup>
-/**
- * @section Imports
- */
-import { ref, computed, onMounted, nextTick, reactive } from 'vue'
-import { ElMessage } from 'element-plus'
-import {
-  Upload,
-  Download,
-  Refresh,
-  FolderOpened,
-  Connection,
-  Aim,
-  User,
-  List,
-  CircleCheckFilled,
-  WarningFilled,
-  InfoFilled,
-  ArrowRight,
-  UploadFilled,
-  ArrowLeft,
-} from '@element-plus/icons-vue'
+import { computed } from 'vue'
+import { ArrowLeft, User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
+import { detectCoronaryCTA } from '@/api/quality'
+import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
 
-/**
- * @section State Definitions
- * @description 定义页面所需的状态变量
- */
-// 模拟状态
-const analyzing = ref(false)
-const analyzeProgress = ref(0) // 进度条百分比
-const dialogVisible = ref(false)
-const currentItem = ref(null)
-
-// 新增：上传弹窗相关状态
-const uploadDialogVisible = ref(false)
-const uploadMode = ref('local') // 'local' | 'pacs'
-const uploadFormRef = ref(null)
-const uploadForm = reactive({
-  patientName: '',
-  examId: '',
-})
-const selectedFile = ref(null)
-
-// 表单验证规则
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
 }
 
-/**
- * @function openUploadDialog
- * @description 打开上传对话框，重置表单状态
- * @param {string} mode - 上传模式 'local' (本地文件) 或 'pacs' (PACS拉取)
- */
-const openUploadDialog = (mode = 'local') => {
-  uploadMode.value = mode
-  uploadForm.patientName = ''
-  uploadForm.examId = ''
-  selectedFile.value = null
-  uploadDialogVisible.value = true
-}
-
-/**
- * @function handleDialogFileChange
- * @description 处理文件选择变更，更新 selectedFile 状态
- * @param {File} file - Element Plus 上传组件选中的文件对象
- */
-const handleDialogFileChange = (file) => {
-  selectedFile.value = file
-}
-
-/**
- * @function submitUpload
- * @description 提交上传表单并触发分析流程
- *
- * 逻辑:
- * 1. 验证表单信息 (患者姓名、检查ID)
- * 2. 检查文件是否已选择 (Local 模式)
- * 3. 关闭弹窗并调用 startAnalysisProcess 开始分析
- */
-const submitUpload = async () => {
-  if (!uploadFormRef.value) return
-
-  await uploadFormRef.value.validate(async (valid) => {
-    if (valid) {
-      // 本地上传模式下，必须选择文件
-      if (uploadMode.value === 'local' && !selectedFile.value) {
-        ElMessage.warning('请上传影像文件')
-        return
-      }
-
-      // PACS 模式下，不需要文件，因为是后端拉取
-      if (uploadMode.value === 'pacs') {
-        ElMessage.info(`正在通知后端从 PACS 拉取 ID: ${uploadForm.examId} 的数据...`)
-      }
-
-      // 关闭弹窗
-      uploadDialogVisible.value = false
-      // 开始分析流程
-      await startAnalysisProcess()
-    }
-  })
-}
-
-// 分析过程相关状态
-const currentAnalysisStep = ref('准备就绪')
-const analysisLogs = ref([])
-
-/**
- * @function simulatePacsSelect
- * @description 模拟从 PACS 系统选择影像
- * 
- * 逻辑:
- * 1. 模拟与 PACS 系统建立连接
- * 2. 模拟检索患者列表
- * 3. 自动填充患者信息到上传表单
- * 4. 切换到 PACS 模式并打开确认弹窗
- */
-const simulatePacsSelect = () => {
-  ElMessage.success('已连接 PACS 系统，正在检索今日检查列表...')
-  // 模拟从 PACS 获取到数据，弹出对话框让用户确认
-  setTimeout(() => {
-    uploadForm.patientName = '张某某'
-    uploadForm.examId = 'PACS_CTA_20231024'
-    // PACS 模式不需要 selectedFile
-    selectedFile.value = null
-
-    // 打开弹窗，指定为 pacs 模式
-    uploadMode.value = 'pacs'
-    uploadDialogVisible.value = true
-
-    ElMessage.success('已自动获取 PACS 影像信息，请确认')
-  }, 500) // 缩短模拟时间
-}
-
-/**
- * @section Mock Data
- * @description 模拟患者和质控结果数据
- */
-// 模拟患者数据
-const patientInfo = ref({
-  name: '',
-  gender: '',
-  age: 0,
-  studyId: '',
-  accessionNumber: '',
-  studyDate: '',
-  device: '',
-  sliceCount: 0,
-  sliceThickness: 0,
-  // Coronary specific
-  heartRate: 0,
-  hrVariability: 0,
-  reconPhase: '',
-  kVp: '',
+const {
+  analyzing,
+  analyzeProgress,
+  currentAnalysisStep,
+  analysisLogs,
+  dialogVisible,
+  currentItem,
+  uploadDialogVisible,
+  uploadMode,
+  uploadFormRef,
+  uploadForm,
+  selectedFile,
+  qcItems,
+  patientInfo,
+  openUploadDialog,
+  handleDialogFileChange,
+  handleDialogFileRemove,
+  submitUpload,
+  simulatePacsSelect,
+  resetUpload,
+  viewDetails,
+  handleReanalyze,
+  handleExport,
+} = useAsyncQualityTaskPage({
+  submitTask: detectCoronaryCTA,
+  initialPatientInfo: {
+    name: '',
+    gender: '',
+    age: 0,
+    studyId: '',
+    accessionNumber: '',
+    studyDate: '',
+    device: '',
+    sliceThickness: 0,
+    heartRate: 0,
+    hrVariability: 0,
+    reconPhase: '',
+    kVp: '',
+  },
+  pacsPreset: {
+    patientName: '张某某',
+    examId: 'PACS_CTA_20231024',
+  },
+  analysisSteps: (form) => [
+    { progress: 10, msg: '正在解析冠脉 CTA 序列...', step: 'DICOM 解析' },
+    { progress: 30, msg: '校验 ECG 门控与序列完整性...', step: '完整性校验' },
+    { progress: 45, msg: `提取患者元数据: ${form.patientName || '未知'}, ...`, step: '元数据提取', prefillPatientInfo: true },
+    { progress: 60, msg: 'AI 模型加载中 (CTA_QC_v2.0)...', step: '模型加载' },
+    { progress: 80, msg: '正在分析血管强化、噪声与门控质量...', step: '特征提取' },
+    { progress: 95, msg: '生成冠脉 CTA 结构化质控报告...', step: '报告生成' },
+  ],
+  pacsLoadingMessage: '已连接 PACS 系统，正在检索今日检查列表...',
+  pacsReadyMessage: '已自动获取 PACS 影像信息，请确认',
+  reanalyzeStartMessage: '正在请求云端 AI 重新分析...',
+  reanalyzeSuccessMessage: '分析完成，数据已更新',
+  exportMessage: '质控报告已生成并开始下载',
 })
 
-// 质控项数据
-const qcItems = ref([])
+const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
 
-/**
- * @function resetUpload
- * @description 重置上传状态，重新打开上传对话框以开始新案例
- */
-const resetUpload = () => {
-  openUploadDialog()
-}
-
-/**
- * @function addLog
- * @description 向分析日志中添加一条新记录，保持最新的 5 条日志
- * @param {string} msg - 日志消息内容
- */
-const addLog = (msg) => {
-  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  analysisLogs.value.unshift({ time, message: msg })
-  // 保持日志最多 5 条
-  if (analysisLogs.value.length > 5) analysisLogs.value.pop()
-}
-
-/**
- * @function startAnalysisProcess
- * @description 模拟完整的 AI 分析流程
- * 包含多个步骤：DICOM解析 -> 完整性校验 -> 元数据提取 -> 模型加载 -> 血管提取 -> 特征分析 -> 报告生成
- *
- * @backend-api (Simulated) WebSocket /ws/quality/coronary-cta/progress
- * @note 实际项目中，此函数将建立 WebSocket 连接监听后端进度推送
- */
-const startAnalysisProcess = async () => {
-  // 清除旧数据，切换到分析视图
-  qcItems.value = []
-  patientInfo.value = { name: '' }
-
-  analyzing.value = true
-  analyzeProgress.value = 0
-  analysisLogs.value = []
-
-  // 模拟分析流程 (冠脉CTA特有)
-  const steps = [
-    { progress: 10, msg: '正在读取 DICOM 文件头信息...', step: 'DICOM 解析' },
-    { progress: 30, msg: '校验心电门控与序列完整性...', step: '完整性校验' },
-    {
-      progress: 45,
-      msg: `提取患者元数据: ${uploadForm.patientName || '未知'}, ...`,
-      step: '元数据提取',
-    },
-    { progress: 55, msg: 'AI 模型加载中 (Coronary_Seg_v3.0)...', step: '模型加载' },
-    { progress: 70, msg: '自动提取冠状动脉血管树...', step: '血管提取' },
-    { progress: 85, msg: '分析血管对比剂强化CT值与伪影...', step: '特征分析' },
-    { progress: 95, msg: '生成结构化质控报告...', step: '报告生成' },
-    { progress: 100, msg: '分析完成', step: '完成' },
-  ]
-
-  for (const step of steps) {
-    // 缩短时间：200ms ~ 400ms
-    await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 200))
-    analyzeProgress.value = step.progress
-    currentAnalysisStep.value = step.step
-    addLog(step.msg)
-
-    // 在中间某个时刻填充患者数据
-    if (step.progress === 45) {
-      // 使用表单数据 + 模拟数据
-      patientInfo.value = {
-        name: uploadForm.patientName || '自动提取中...',
-        gender: Math.random() > 0.5 ? '男' : '女', // 模拟自动获取
-        age: 50 + Math.floor(Math.random() * 30), // 模拟自动获取
-        studyId: uploadForm.examId || 'UNKNOWN',
-        accessionNumber: 'ACC' + Math.floor(Math.random() * 100000), // 模拟自动获取
-        studyDate: new Date().toLocaleString(), // 模拟自动获取
-        device: 'Siemens Somatom Force', // 模拟自动获取
-        sliceCount: 400, // 模拟自动获取
-        sliceThickness: 0.6, // 模拟自动获取
-        // CTA Specific
-        heartRate: 60 + Math.floor(Math.random() * 20), // 60-80
-        hrVariability: Math.floor(Math.random() * 4), // 0-3
-        reconPhase: '75% (Diastolic)',
-        kVp: '100 kV',
-      }
-    }
-  }
-
-  await fetchQCData()
-}
-
-/**
- * @section Computed Properties
- */
-// 计算异常数量
-const abnormalCount = computed(() => {
-  return qcItems.value.filter((item) => item.status === '不合格').length
-})
-
-// 计算质控分数 (简单逻辑：每个合格项得 100/总数 分，向下取整)
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
-// 分数颜色
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
   return '#F56C6C'
 })
-
-/**
- * @function fetchQCData
- * @description 获取质控检测结果数据
- * @returns {Promise<void>} 更新 qcItems 状态
- *
- * @backend-api [MOCK] detectCoronaryCTA (src/api/quality.js)
- * @backend-api (Planned) POST /api/v1/quality/coronary-cta/detect
- * @note 该函数模拟了向后端发送检测请求并获取完整报告的过程
- */
-const fetchQCData = async () => {
-  analyzing.value = true
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 300))
-
-  // 模拟数据生成
-  // 真实场景: const res = await detectCoronaryCTA(selectedFile.value)
-
-  // 模拟返回数据 - 冠脉CTA质控项 (12项)
-  qcItems.value = [
-    {
-      name: '心率控制',
-      description: '检查扫描期间平均心率是否符合重建要求',
-      status: '合格',
-      detail: '平均心率 62 bpm (<=75 bpm)',
-    },
-    {
-      name: '心率稳定性',
-      description: '检查扫描期间心率波动情况',
-      status: '合格',
-      detail: '心率波动 < 5 bpm',
-    },
-    {
-      name: '呼吸配合',
-      description: '检查是否存在呼吸运动伪影',
-      status: '合格',
-      detail: '膈肌位置稳定',
-    },
-    {
-      name: '血管强化 (AO)',
-      description: '升主动脉根部 CT 值',
-      status: '合格',
-      detail: 'CT值 380 HU (>=300 HU)',
-    },
-    {
-      name: '血管强化 (LAD)',
-      description: '左前降支远端 CT 值',
-      status: '合格',
-      detail: 'CT值 280 HU (>=250 HU)',
-    },
-    {
-      name: '血管强化 (RCA)',
-      description: '右冠状动脉远端 CT 值',
-      status: '不合格',
-      detail: 'CT值 210 HU (<250 HU)，强化稍显不足',
-    },
-    {
-      name: '噪声水平',
-      description: '主动脉根部图像噪声 (SD)',
-      status: '合格',
-      detail: 'SD = 22 HU (<=30 HU)',
-    },
-    {
-      name: '钙化积分影响',
-      description: '严重钙化斑块导致的伪影干扰',
-      status: '合格',
-      detail: '无严重钙化干扰',
-    },
-    {
-      name: '台阶伪影',
-      description: '因心率不齐或屏气不佳导致的层面错位',
-      status: '合格',
-      detail: '血管连续性良好',
-    },
-    {
-      name: '心电门控',
-      description: 'ECG 信号同步状态',
-      status: '合格',
-      detail: 'R波触发准确',
-    },
-    {
-      name: '扫描范围',
-      description: '覆盖气管分叉至心脏膈面下',
-      status: '合格',
-      detail: '心脏包络完整',
-    },
-    {
-      name: '金属/线束伪影',
-      description: '上腔静脉高浓度对比剂或电极片伪影',
-      status: '不合格',
-      detail: '上腔静脉硬化伪影干扰 RCA 近段观察',
-    },
-  ]
-
-  analyzing.value = false
-}
-
-/**
- * @function handleReanalyze
- * @description 触发重新分析流程
- * @backend-api (Planned) POST /api/v1/quality/coronary-cta/reanalyze
- */
-const handleReanalyze = () => {
-  ElMessage.info('正在请求云端 AI 重新分析...')
-  fetchQCData().then(() => {
-    ElMessage.success('分析完成，数据已更新')
-  })
-}
-
-/**
- * @function handleExport
- * @description 导出质控报告
- * @backend-api (Planned) GET /api/v1/quality/coronary-cta/report/export
- */
-const handleExport = () => {
-  ElMessage.success('质控报告已生成并开始下载')
-}
-
-/**
- * @function viewDetails
- * @description 查看单个质控项的详情，打开详情弹窗
- * @param {Object} item - 选中的质控项对象，包含名称、状态、描述等信息
- */
-const viewDetails = (item) => {
-  currentItem.value = item
-  dialogVisible.value = true
-}
 </script>
 
 <style scoped>
@@ -1248,3 +932,5 @@ const viewDetails = (item) => {
   opacity: 0;
 }
 </style>
+
+

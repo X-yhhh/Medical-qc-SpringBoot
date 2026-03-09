@@ -5,6 +5,7 @@ import com.medical.qc.entity.User;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 
@@ -35,7 +36,14 @@ public interface QualityService {
      */
     HemorrhageRecord getHistoryRecord(Long userId, Long recordId);
 
-    Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId) throws IOException;
+    Map<String, Object> processHemorrhage(MultipartFile file,
+                                          User user,
+                                          String patientName,
+                                          String patientCode,
+                                          String examId,
+                                          String gender,
+                                          Integer age,
+                                          LocalDate studyDate) throws IOException;
     
     // Mock methods for other items
     Map<String, Object> detectHead(MultipartFile file);

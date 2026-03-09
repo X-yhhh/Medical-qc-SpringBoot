@@ -165,7 +165,11 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
                           `id` bigint NOT NULL AUTO_INCREMENT,
                           `user_id` bigint NOT NULL,
                           `patient_name` varchar(100) DEFAULT NULL,
+                          `patient_code` varchar(100) DEFAULT NULL,
                           `exam_id` varchar(100) DEFAULT NULL,
+                          `gender` varchar(20) DEFAULT NULL,
+                          `age` int DEFAULT NULL,
+                          `study_date` date DEFAULT NULL,
                           `image_path` varchar(500) NOT NULL,
                           `prediction` varchar(50) NOT NULL,
                           `qc_status` varchar(20) NOT NULL COMMENT '质控结论：合格/不合格',
@@ -193,6 +197,14 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
 
             addColumnIfMissing(connection, statement, "hemorrhage_records", "qc_status",
                     "ALTER TABLE `hemorrhage_records` ADD COLUMN `qc_status` varchar(20) DEFAULT NULL COMMENT '质控结论：合格/不合格' AFTER `prediction`");
+            addColumnIfMissing(connection, statement, "hemorrhage_records", "patient_code",
+                    "ALTER TABLE `hemorrhage_records` ADD COLUMN `patient_code` varchar(100) DEFAULT NULL AFTER `patient_name`");
+            addColumnIfMissing(connection, statement, "hemorrhage_records", "gender",
+                    "ALTER TABLE `hemorrhage_records` ADD COLUMN `gender` varchar(20) DEFAULT NULL AFTER `exam_id`");
+            addColumnIfMissing(connection, statement, "hemorrhage_records", "age",
+                    "ALTER TABLE `hemorrhage_records` ADD COLUMN `age` int DEFAULT NULL AFTER `gender`");
+            addColumnIfMissing(connection, statement, "hemorrhage_records", "study_date",
+                    "ALTER TABLE `hemorrhage_records` ADD COLUMN `study_date` date DEFAULT NULL AFTER `age`");
             addColumnIfMissing(connection, statement, "hemorrhage_records", "midline_shift",
                     "ALTER TABLE `hemorrhage_records` ADD COLUMN `midline_shift` tinyint(1) DEFAULT NULL");
             addColumnIfMissing(connection, statement, "hemorrhage_records", "shift_score",
@@ -217,6 +229,25 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
                       ELSE '合格'
                     END
                     WHERE `qc_status` IS NULL OR `qc_status` = ''
+                    """);
+
+            statement.executeUpdate("""
+                    UPDATE `hemorrhage_records`
+                    SET `patient_code` = `exam_id`
+                    WHERE (`patient_code` IS NULL OR `patient_code` = '')
+                      AND `exam_id` IS NOT NULL AND `exam_id` <> ''
+                    """);
+
+            statement.executeUpdate("""
+                    UPDATE `hemorrhage_records`
+                    SET `study_date` = DATE(`created_at`)
+                    WHERE `study_date` IS NULL AND `created_at` IS NOT NULL
+                    """);
+
+            statement.executeUpdate("""
+                    UPDATE `hemorrhage_records`
+                    SET `device` = 'cuda'
+                    WHERE `device` IS NULL OR LOWER(`device`) <> 'cuda'
                     """);
 
             addIndexIfMissing(connection, statement, "hemorrhage_records", "idx_hemorrhage_user_created_at",

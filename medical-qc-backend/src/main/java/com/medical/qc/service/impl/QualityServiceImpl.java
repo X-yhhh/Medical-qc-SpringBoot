@@ -2,12 +2,13 @@ package com.medical.qc.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.medical.qc.messaging.HemorrhageIssueSyncDispatcher;
 import com.medical.qc.entity.HemorrhageRecord;
 import com.medical.qc.entity.User;
 import com.medical.qc.mapper.HemorrhageRecordMapper;
-import com.medical.qc.service.IssueService;
 import com.medical.qc.service.QualityService;
 import com.medical.qc.support.HemorrhageIssueSupport;
+import com.medical.qc.support.MockQualityAnalysisSupport;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.net.URI;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,12 +31,19 @@ import java.awt.image.BufferedImage;
 
 @Service
 public class QualityServiceImpl implements QualityService {
+    private static final String HEMORRHAGE_MODEL_NAME = "AdvancedHemorrhageModel";
+    private static final String HEMORRHAGE_SCAN_REGION = "头颅平扫";
+    private static final String HEMORRHAGE_SCANNER_MODEL = "头颅 CT 标准采集设备";
+    private static final String HEMORRHAGE_INFERENCE_DEVICE = "cuda";
 
     @Autowired
     private HemorrhageRecordMapper hemorrhageRecordMapper;
 
     @Autowired
-    private IssueService issueService;
+    private HemorrhageIssueSyncDispatcher hemorrhageIssueSyncDispatcher;
+
+    @Autowired
+    private ObjectMapper objectMapper;
 
     @Value("${python.model_server.url:ws://localhost:8765}")
     private String modelServerUrl;
@@ -104,13 +113,24 @@ public class QualityServiceImpl implements QualityService {
      * @param file        上传的影像文件
      * @param user        当前登录用户
      * @param patientName 患者姓名
+     * @param patientCode 患者编号
      * @param examId      检查 ID
+     * @param gender      性别
+     * @param age         年龄
+     * @param studyDate   检查日期
      * @return 模型分析结果（包含 prediction、概率、耗时、影像回显信息等）
      * @throws IOException      文件保存或读取失败时抛出
      * @throws RuntimeException 模型服务返回错误或解析失败时抛出
      */
     @Override
-    public Map<String, Object> processHemorrhage(MultipartFile file, User user, String patientName, String examId)
+    public Map<String, Object> processHemorrhage(MultipartFile file,
+                                                 User user,
+                                                 String patientName,
+                                                 String patientCode,
+                                                 String examId,
+                                                 String gender,
+                                                 Integer age,
+                                                 LocalDate studyDate)
             throws IOException {
         validateHemorrhageFile(file);
 
@@ -132,8 +152,13 @@ public class QualityServiceImpl implements QualityService {
         // Save to DB
         HemorrhageRecord record = new HemorrhageRecord();
         record.setUserId(user.getId());
-        record.setPatientName(patientName);
-        record.setExamId(examId);
+        String normalizedExamId = normalizeText(examId);
+        record.setPatientName(normalizeText(patientName));
+        record.setPatientCode(resolvePatientCode(patientCode, normalizedExamId));
+        record.setExamId(normalizedExamId);
+        record.setGender(normalizeText(gender));
+        record.setAge(normalizeAge(age));
+        record.setStudyDate(studyDate);
         record.setImagePath("uploads/" + filename);
 
         // Translate Prediction to Chinese (Front-end expectation)
@@ -175,15 +200,21 @@ public class QualityServiceImpl implements QualityService {
         if (predictionResult.get("ventricle_detail") != null) {
             record.setVentricleDetail(String.valueOf(predictionResult.get("ventricle_detail")));
         }
-        if (predictionResult.get("device") != null) {
-            record.setDevice(String.valueOf(predictionResult.get("device")));
-        }
+        record.setDevice(HEMORRHAGE_INFERENCE_DEVICE);
 
         populatePrimaryIssue(record);
         String qcStatus = HemorrhageIssueSupport.resolveQcStatus(record);
         record.setQcStatus(qcStatus);
         predictionResult.put("primary_issue", record.getPrimaryIssue());
         predictionResult.put("qc_status", qcStatus); // 供首页最近访问和历史列表直接复用
+        predictionResult.put("patient_code", record.getPatientCode());
+        predictionResult.put("gender", record.getGender());
+        predictionResult.put("age", record.getAge());
+        predictionResult.put("study_date", record.getStudyDate());
+        predictionResult.put("device", HEMORRHAGE_INFERENCE_DEVICE);
+        predictionResult.put("model_name", HEMORRHAGE_MODEL_NAME);
+        predictionResult.put("scan_region", HEMORRHAGE_SCAN_REGION);
+        predictionResult.put("scanner_model", HEMORRHAGE_SCANNER_MODEL);
 
         // Append image meta and URL for frontend rendering
         try {
@@ -204,22 +235,25 @@ public class QualityServiceImpl implements QualityService {
         // Exclude base64 preview from persisted raw result to keep DB payload compact.
         Map<String, Object> persistedResult = new HashMap<>(predictionResult);
         persistedResult.remove("image_base64");
-        record.setRawResultJson(new ObjectMapper().writeValueAsString(persistedResult));
+        record.setRawResultJson(objectMapper.writeValueAsString(persistedResult));
 
         record.setCreatedAt(LocalDateTime.now());
         record.setUpdatedAt(record.getCreatedAt());
         hemorrhageRecordMapper.insert(record);
 
-        // 历史记录入库后立即同步异常工单，确保首页与异常汇总页实时读取数据库结果。
-        issueService.syncHemorrhageIssue(record);
+        hemorrhageIssueSyncDispatcher.dispatch(record);
 
         // 返回数据库真实落库后的补充信息，便于前端严格按后端结果回显。
         predictionResult.put("record_id", record.getId());
         predictionResult.put("patient_name", record.getPatientName());
+        predictionResult.put("patient_code", record.getPatientCode());
         predictionResult.put("exam_id", record.getExamId());
+        predictionResult.put("gender", record.getGender());
+        predictionResult.put("age", record.getAge());
+        predictionResult.put("study_date", record.getStudyDate());
         predictionResult.put("created_at", record.getCreatedAt());
         predictionResult.put("updated_at", record.getUpdatedAt());
-        predictionResult.put("device", record.getDevice());
+        predictionResult.put("device", HEMORRHAGE_INFERENCE_DEVICE);
 
         return predictionResult;
     }
@@ -232,6 +266,27 @@ public class QualityServiceImpl implements QualityService {
      */
     private int normalizeHistoryLimit(Integer limit) {
         return Math.max(1, Math.min(limit, 20));
+    }
+
+    private String normalizeText(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    private String resolvePatientCode(String patientCode, String examId) {
+        String normalizedPatientCode = normalizeText(patientCode);
+        if (normalizedPatientCode != null) {
+            return normalizedPatientCode;
+        }
+
+        return examId;
+    }
+
+    private Integer normalizeAge(Integer age) {
+        if (age == null) {
+            return null;
+        }
+
+        return age < 0 ? null : age;
     }
 
     /**
@@ -354,7 +409,7 @@ public class QualityServiceImpl implements QualityService {
                         Map<String, String> req = new HashMap<>();
                         req.put("image_path", imagePath);
                         try {
-                            send(new ObjectMapper().writeValueAsString(req));
+                            send(objectMapper.writeValueAsString(req));
                         } catch (Exception e) {
                             future.completeExceptionally(e);
                         }
@@ -389,7 +444,7 @@ public class QualityServiceImpl implements QualityService {
                 }
 
                 String resultJson = future.get(60, TimeUnit.SECONDS); // Increased timeout for initial CUDA load
-                return new ObjectMapper().readValue(resultJson, Map.class);
+                return objectMapper.readValue(resultJson, Map.class);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return Collections.singletonMap("error", "Connection interrupted");
@@ -414,37 +469,19 @@ public class QualityServiceImpl implements QualityService {
     // Mock Implementations matching frontend expectations
     @Override
     public Map<String, Object> detectHead(MultipartFile file) {
-        return createMockResponse(Arrays.asList("运动伪影", "金属伪影", "FOV过大", "FOV过小", "层厚不当"));
+        return MockQualityAnalysisSupport.createMockResult(MockQualityAnalysisSupport.TASK_TYPE_HEAD);
     }
 
     @Override
     public Map<String, Object> detectChest(MultipartFile file, boolean contrast) {
-        if (contrast) {
-            return createMockResponse(Arrays.asList("分期错误", "增强时机不当", "FOV过小"));
-        } else {
-            return createMockResponse(Arrays.asList("呼吸伪影", "体外金属", "扫描范围不全"));
-        }
+        return MockQualityAnalysisSupport.createMockResult(
+                contrast ? MockQualityAnalysisSupport.TASK_TYPE_CHEST_CONTRAST
+                        : MockQualityAnalysisSupport.TASK_TYPE_CHEST_NON_CONTRAST);
     }
 
     @Override
     public Map<String, Object> detectCoronary(MultipartFile file) {
-        return createMockResponse(Arrays.asList("心率过快", "呼吸伪影", "钙化伪影", "血管充盈不佳"));
-    }
-
-    private Map<String, Object> createMockResponse(List<String> possibleIssues) {
-        List<Map<String, String>> issues = new ArrayList<>();
-        Random random = new Random();
-        for (String item : possibleIssues) {
-            Map<String, String> issue = new HashMap<>();
-            issue.put("item", item);
-            issue.put("status", random.nextDouble() > 0.7 ? "不合格" : "合格");
-            issues.add(issue);
-        }
-
-        Map<String, Object> response = new HashMap<>();
-        response.put("issues", issues);
-        response.put("duration", 800 + random.nextInt(500));
-        return response;
+        return MockQualityAnalysisSupport.createMockResult(MockQualityAnalysisSupport.TASK_TYPE_CORONARY_CTA);
     }
 }
 

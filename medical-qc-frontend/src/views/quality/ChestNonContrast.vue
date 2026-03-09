@@ -1,20 +1,15 @@
-<!--
+﻿<!--
   @file src/views/quality/ChestNonContrast.vue
   @description CT胸部平扫智能质控视图
   主要功能：
-  1. 影像上传：支持本地DICOM文件夹拖拽上传和PACS系统模拟拉取。
-  2. AI智能分析：展示分析进度、当前步骤和实时日志（模拟）。
-  3. 结果展示：
-     - 患者检查信息卡片（包含扫描部位、图像层数等）
-     - 质控评分仪表盘
-     - 异常项汇总
-     - 详细质控检测项列表（扫描范围、呼吸伪影、金属伪影等）
-  4. 详情查看：点击质控项查看详细分析结果和影像快照（Mock）。
+  1. 影像上传：支持本地影像上传和 PACS 模拟调取。
+  2. 异步分析：提交后端质控任务，前端自动轮询任务状态并展示进度。
+  3. 结果展示：患者检查信息、质控评分、异常项汇总与详情列表。
+  4. 详情查看：点击质控项查看详细分析结果。
 
   @backend-api
-  - [MOCK] detectChestNonContrast: 模拟胸部平扫质控检测 (src/api/quality.js)
-  - (Planned) POST /api/v1/quality/chest-non-contrast/detect: 真实后端检测接口
-  - (Simulated) WebSocket /ws/quality/chest-non-contrast/progress: 实时分析进度推送
+  - [POST] /api/v1/quality/chest-non-contrast/detect: 提交胸部平扫异步质控任务
+  - [GET] /api/v1/quality/tasks/{taskId}: 轮询任务结果
 -->
 <template>
   <div class="head-qc-container">
@@ -316,7 +311,7 @@
             :show-file-list="true"
             :limit="1"
             :on-change="handleDialogFileChange"
-            :on-remove="() => (selectedFile = null)"
+            :on-remove="handleDialogFileRemove"
             style="width: 100%"
             accept=".dcm"
           >
@@ -345,329 +340,84 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, reactive } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed } from 'vue'
 import { ArrowLeft, User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
-
-// 模拟状态
-const analyzing = ref(false)
-const analyzeProgress = ref(0) // 进度条百分比
-const dialogVisible = ref(false)
-const currentItem = ref(null)
-
-// 新增：上传弹窗相关状态
-const uploadDialogVisible = ref(false)
-const uploadMode = ref('local') // 'local' | 'pacs'
-const uploadFormRef = ref(null)
-const uploadForm = reactive({
-  patientName: '',
-  examId: '',
-})
-const selectedFile = ref(null)
+import { detectChestNonContrast } from '@/api/quality'
+import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
 
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
 }
 
-/**
- * @function openUploadDialog
- * @description 打开上传对话框，重置表单状态
- * @param {string} mode - 上传模式 'local' (本地文件) 或 'pacs' (PACS拉取)
- */
-const openUploadDialog = (mode = 'local') => {
-  uploadMode.value = mode
-  uploadForm.patientName = ''
-  uploadForm.examId = ''
-  selectedFile.value = null
-  uploadDialogVisible.value = true
-}
-
-/**
- * @function handleDialogFileChange
- * @description 处理文件选择变更，更新 selectedFile 状态
- * @param {File} file - Element Plus 上传组件选中的文件对象
- */
-const handleDialogFileChange = (file) => {
-  selectedFile.value = file
-}
-
-/**
- * @function submitUpload
- * @description 提交上传表单并触发分析流程
- *
- * 逻辑:
- * 1. 验证表单信息 (患者姓名、检查ID)
- * 2. 检查文件是否已选择 (Local 模式)
- * 3. 关闭弹窗并调用 startAnalysisProcess 开始分析
- */
-const submitUpload = async () => {
-  if (!uploadFormRef.value) return
-
-  await uploadFormRef.value.validate(async (valid) => {
-    if (valid) {
-      // 本地上传模式下，必须选择文件
-      if (uploadMode.value === 'local' && !selectedFile.value) {
-        ElMessage.warning('请上传影像文件')
-        return
-      }
-
-      // PACS 模式下，不需要文件，因为是后端拉取
-      if (uploadMode.value === 'pacs') {
-        ElMessage.info(`正在通知后端从 PACS 拉取 ID: ${uploadForm.examId} 的数据...`)
-      }
-
-      // 关闭弹窗
-      uploadDialogVisible.value = false
-      // 开始分析流程
-      await startAnalysisProcess()
-    }
-  })
-}
-
-// 分析过程相关状态
-const currentAnalysisStep = ref('准备就绪')
-const analysisLogs = ref([])
-
-/**
- * @function simulatePacsSelect
- * @description 模拟从 PACS 系统选择影像
- *
- * 逻辑:
- * 1. 模拟与 PACS 系统建立连接
- * 2. 模拟检索患者列表
- * 3. 自动填充患者信息到上传表单
- * 4. 切换到 PACS 模式并打开确认弹窗
- */
-const simulatePacsSelect = () => {
-  ElMessage.success('已连接 PACS 系统，正在检索今日检查列表...')
-  // 模拟从 PACS 获取到数据，弹出对话框让用户确认
-  setTimeout(() => {
-    uploadForm.patientName = '王某某'
-    uploadForm.examId = 'PACS_CHEST_20231024'
-    // PACS 模式不需要 selectedFile
-    selectedFile.value = null
-
-    // 打开弹窗，指定为 pacs 模式
-    uploadMode.value = 'pacs'
-    uploadDialogVisible.value = true
-
-    ElMessage.success('已自动获取 PACS 影像信息，请确认')
-  }, 500)
-}
-
-// 模拟患者数据
-const patientInfo = ref({
-  name: '',
-  gender: '',
-  age: 0,
-  studyId: '',
-  accessionNumber: '',
-  studyDate: '',
-  device: '',
-  sliceCount: 0,
-  sliceThickness: 0,
-})
-
-// 质控项数据
-const qcItems = ref([])
-
-/**
- * @function resetUpload
- * @description 重置上传状态，重新打开上传对话框以开始新案例
- */
-const resetUpload = () => {
-  openUploadDialog()
-}
-
-/**
- * @function addLog
- * @description 向分析日志中添加一条新记录，保持最新的 5 条日志
- * @param {string} msg - 日志消息内容
- */
-const addLog = (msg) => {
-  const time = new Date().toLocaleTimeString('zh-CN', { hour12: false })
-  analysisLogs.value.unshift({ time, message: msg })
-  // 保持日志最多 5 条
-  if (analysisLogs.value.length > 5) analysisLogs.value.pop()
-}
-
-/**
- * @function startAnalysisProcess
- * @description 模拟完整的 AI 分析流程
- * 包含多个步骤：DICOM解析 -> 完整性校验 -> 元数据提取 -> 模型加载 -> 特征提取 -> 报告生成
- *
- * @backend-api (Simulated) WebSocket /ws/quality/chest-non-contrast/progress
- * @note 实际项目中，此函数将建立 WebSocket 连接监听后端进度推送
- */
-const startAnalysisProcess = async () => {
-  // 清除旧数据，切换到分析视图
-  qcItems.value = []
-  patientInfo.value = { name: '' }
-
-  analyzing.value = true
-  analyzeProgress.value = 0
-  analysisLogs.value = []
-
-  // 模拟分析流程
-  const steps = [
-    { progress: 10, msg: '正在读取 DICOM 文件头信息...', step: 'DICOM 解析' },
+const {
+  analyzing,
+  analyzeProgress,
+  currentAnalysisStep,
+  analysisLogs,
+  dialogVisible,
+  currentItem,
+  uploadDialogVisible,
+  uploadMode,
+  uploadFormRef,
+  uploadForm,
+  selectedFile,
+  qcItems,
+  patientInfo,
+  openUploadDialog,
+  handleDialogFileChange,
+  handleDialogFileRemove,
+  submitUpload,
+  simulatePacsSelect,
+  resetUpload,
+  viewDetails,
+  handleReanalyze,
+  handleExport,
+} = useAsyncQualityTaskPage({
+  submitTask: detectChestNonContrast,
+  initialPatientInfo: {
+    name: '',
+    gender: '',
+    age: 0,
+    studyId: '',
+    accessionNumber: '',
+    studyDate: '',
+    device: '',
+    sliceCount: 0,
+    sliceThickness: 0,
+  },
+  pacsPreset: {
+    patientName: '王某某',
+    examId: 'PACS_CHEST_20231024',
+  },
+  analysisSteps: (form) => [
+    { progress: 10, msg: '正在解析胸部 DICOM 序列...', step: 'DICOM 解析' },
     { progress: 30, msg: '校验序列完整性 (300/300 slices)...', step: '完整性校验' },
-    {
-      progress: 45,
-      msg: `提取患者元数据: ${uploadForm.patientName || '未知'}, ...`,
-      step: '元数据提取',
-    },
+    { progress: 45, msg: `提取患者元数据: ${form.patientName || '未知'}, ...`, step: '元数据提取', prefillPatientInfo: true },
     { progress: 60, msg: 'AI 模型加载中 (Chest_CT_QC_v1.5)...', step: '模型加载' },
     { progress: 80, msg: '正在检测呼吸伪影与心脏运动伪影...', step: '特征提取' },
     { progress: 95, msg: '生成结构化质控报告...', step: '报告生成' },
-    { progress: 100, msg: '分析完成', step: '完成' },
-  ]
-
-  for (const step of steps) {
-    await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 200))
-    analyzeProgress.value = step.progress
-    currentAnalysisStep.value = step.step
-    addLog(step.msg)
-
-    // 在中间某个时刻填充患者数据
-    if (step.progress === 45) {
-      // 使用表单数据 + 模拟数据
-      patientInfo.value = {
-        name: uploadForm.patientName || '自动提取中...',
-        gender: Math.random() > 0.5 ? '男' : '女', // 模拟自动获取
-        age: 40 + Math.floor(Math.random() * 40), // 模拟自动获取
-        studyId: uploadForm.examId || 'UNKNOWN',
-        accessionNumber: 'ACC' + Math.floor(Math.random() * 100000), // 模拟自动获取
-        studyDate: new Date().toLocaleString(), // 模拟自动获取
-        device: 'GE Revolution CT', // 模拟自动获取
-        sliceCount: 300, // 模拟自动获取
-        sliceThickness: 1.25, // 模拟自动获取
-      }
-    }
-  }
-
-  await fetchQCData()
-}
-
-// 计算异常数量
-const abnormalCount = computed(() => {
-  return qcItems.value.filter((item) => item.status === '不合格').length
+  ],
+  pacsLoadingMessage: '已连接 PACS 系统，正在检索今日检查列表...',
+  pacsReadyMessage: '已自动获取 PACS 影像信息，请确认',
+  reanalyzeStartMessage: '正在请求云端 AI 重新分析...',
+  reanalyzeSuccessMessage: '分析完成，数据已更新',
+  exportMessage: '质控报告已生成并开始下载',
 })
 
-// 计算质控分数 (简单逻辑：每个合格项得 100/总数 分，向下取整)
+const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
+
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
-// 分数颜色
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
   return '#F56C6C'
 })
-
-/**
- * @function fetchQCData
- * @description 获取质控检测结果数据
- * @returns {Promise<void>} 更新 qcItems 状态
- *
- * @backend-api [MOCK] detectChestNonContrast (src/api/quality.js)
- * @backend-api (Planned) POST /api/v1/quality/chest-non-contrast/detect
- * @note 该函数模拟了向后端发送检测请求并获取完整报告的过程
- */
-const fetchQCData = async () => {
-  analyzing.value = true
-  // 模拟网络延迟
-  await new Promise((resolve) => setTimeout(resolve, 300))
-
-  // 模拟返回数据 - CT胸部平扫质控项
-  qcItems.value = [
-    {
-      name: '扫描范围',
-      status: '合格',
-      description: '肺尖至肺底完整覆盖',
-      detail: '',
-    },
-    {
-      name: '呼吸伪影',
-      status: '合格',
-      description: '无明显呼吸运动伪影',
-      detail: '',
-    },
-    {
-      name: '体位不正',
-      status: '合格',
-      description: '患者居中，无倾斜',
-      detail: '',
-    },
-    {
-      name: '金属伪影',
-      status: '不合格',
-      description: '无明显金属伪影干扰',
-      detail: '左侧胸壁可见少量金属伪影',
-    },
-    {
-      name: '图像噪声',
-      status: '合格',
-      description: '噪声指数符合诊断要求',
-      detail: '',
-    },
-    {
-      name: '肺窗设置',
-      status: '合格',
-      description: '窗宽窗位适宜观察肺纹理',
-      detail: '',
-    },
-    {
-      name: '纵隔窗设置',
-      status: '合格',
-      description: '窗宽窗位适宜观察纵隔结构',
-      detail: '',
-    },
-    {
-      name: '心影干扰',
-      status: '合格',
-      description: '心脏搏动伪影在可接受范围内',
-      detail: '',
-    },
-  ]
-
-  analyzing.value = false
-}
-
-/**
- * @function handleReanalyze
- * @description 触发重新分析流程
- * @backend-api (Planned) POST /api/v1/quality/chest-non-contrast/reanalyze
- */
-const handleReanalyze = () => {
-  ElMessage.info('正在请求云端 AI 重新分析...')
-  fetchQCData().then(() => {
-    ElMessage.success('分析完成，数据已更新')
-  })
-}
-
-/**
- * @function handleExport
- * @description 导出质控报告
- * @backend-api (Planned) GET /api/v1/quality/chest-non-contrast/report/export
- */
-const handleExport = () => {
-  ElMessage.success('质控报告已生成并开始下载')
-}
-
-/**
- * @function viewDetails
- * @description 查看单个质控项的详情，打开详情弹窗
- * @param {Object} item - 选中的质控项对象，包含名称、状态、描述等信息
- */
-const viewDetails = (item) => {
-  currentItem.value = item
-  dialogVisible.value = true
-}
 </script>
 
 <style scoped>
@@ -1154,3 +904,5 @@ const viewDetails = (item) => {
   }
 }
 </style>
+
+

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -19,7 +20,11 @@ public class HemorrhageRecord implements Serializable {
     private Long id;
     private Long userId;
     private String patientName;
+    private String patientCode;
     private String examId;
+    private String gender;
+    private Integer age;
+    private LocalDate studyDate;
     private String imagePath;
     private String prediction;
     private String qcStatus;
@@ -68,12 +73,44 @@ public class HemorrhageRecord implements Serializable {
         this.patientName = patientName;
     }
 
+    public String getPatientCode() {
+        return patientCode;
+    }
+
+    public void setPatientCode(String patientCode) {
+        this.patientCode = patientCode;
+    }
+
     public String getExamId() {
         return examId;
     }
 
     public void setExamId(String examId) {
         this.examId = examId;
+    }
+
+    public String getGender() {
+        return gender;
+    }
+
+    public void setGender(String gender) {
+        this.gender = gender;
+    }
+
+    public Integer getAge() {
+        return age;
+    }
+
+    public void setAge(Integer age) {
+        this.age = age;
+    }
+
+    public LocalDate getStudyDate() {
+        return studyDate;
+    }
+
+    public void setStudyDate(LocalDate studyDate) {
+        this.studyDate = studyDate;
     }
 
     public String getImagePath() {

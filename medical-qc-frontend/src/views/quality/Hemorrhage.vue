@@ -127,19 +127,20 @@
             <template #header>
               <div class="card-header">
                 <span><el-icon><User /></el-icon> 患者检查信息</span>
-                <el-tag size="small" type="info">Accession No: {{ patientInfo.accessionNumber }}</el-tag>
+                <el-tag size="small" type="info">检查编号：{{ patientInfo.examId }}</el-tag>
               </div>
             </template>
             <el-descriptions :column="3" border>
               <el-descriptions-item label="姓名">{{ patientInfo.name }}</el-descriptions-item>
+              <el-descriptions-item label="患者编号">{{ patientInfo.patientCode }}</el-descriptions-item>
               <el-descriptions-item label="性别">{{ patientInfo.gender }}</el-descriptions-item>
               <el-descriptions-item label="年龄">{{ formatAge(patientInfo.age) }}</el-descriptions-item>
-              <el-descriptions-item label="检查ID">{{ patientInfo.studyId }}</el-descriptions-item>
+              <el-descriptions-item label="检查编号">{{ patientInfo.examId }}</el-descriptions-item>
               <el-descriptions-item label="检查日期">{{ patientInfo.studyDate }}</el-descriptions-item>
               <el-descriptions-item label="设备型号">{{ patientInfo.device }}</el-descriptions-item>
-              <el-descriptions-item label="扫描部位">Head Routine</el-descriptions-item>
+              <el-descriptions-item label="扫描部位">{{ scanRegion }}</el-descriptions-item>
               <el-descriptions-item label="检测模型">
-                 <el-tag size="small" effect="plain">{{ modelName || '--' }}</el-tag>
+                 <el-tag size="small" effect="plain">{{ modelName }}</el-tag>
               </el-descriptions-item>
               <el-descriptions-item label="推理设备">
                 <span style="color: #409EFF; font-weight: bold;">{{ inferenceDevice }}</span>
@@ -254,8 +255,31 @@
         <el-form-item label="患者姓名" prop="patientName">
           <el-input v-model="uploadForm.patientName" placeholder="请输入患者姓名"></el-input>
         </el-form-item>
-        <el-form-item label="检查 ID" prop="examId">
-          <el-input v-model="uploadForm.examId" placeholder="请输入 Accession No."></el-input>
+        <el-form-item label="患者编号" prop="patientCode">
+          <el-input v-model="uploadForm.patientCode" placeholder="请输入患者编号"></el-input>
+        </el-form-item>
+        <el-form-item label="检查编号" prop="examId">
+          <el-input v-model="uploadForm.examId" placeholder="请输入检查编号"></el-input>
+        </el-form-item>
+        <el-form-item label="性别" prop="gender">
+          <el-select v-model="uploadForm.gender" placeholder="请选择性别" style="width: 100%">
+            <el-option label="男" value="男" />
+            <el-option label="女" value="女" />
+            <el-option label="未说明" value="未说明" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="年龄" prop="age">
+          <el-input-number v-model="uploadForm.age" :min="0" :max="150" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="检查日期" prop="studyDate">
+          <el-date-picker
+            v-model="uploadForm.studyDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            placeholder="请选择检查日期"
+            style="width: 100%"
+          />
         </el-form-item>
 
         <!-- 本地模式：显示文件上传控件 -->
@@ -395,12 +419,14 @@ const hasHemorrhage = ref(false)
 const hemorrhageProb = ref(0)
 const primaryIssue = ref('未见明显异常')
 const inferenceDevice = ref('--')
-const modelName = ref('')
+const modelName = ref('AdvancedHemorrhageModel')
 const imageUrl = ref('')
 const bboxes = ref([])
 const confidenceLevel = ref('--')
 const imageMeta = ref({ width: 0, height: 0 })
 const recordCreatedAt = ref('')
+const scanRegion = '头颅平扫'
+const scannerModel = '头颅 CT 标准采集设备'
 
 // --- 日志与进度 ---
 const currentAnalysisStep = ref('准备就绪')
@@ -409,12 +435,20 @@ const analysisLogs = ref([])
 // --- 表单数据 ---
 const uploadForm = reactive({
   patientName: '',
+  patientCode: '',
   examId: '',
+  gender: '未说明',
+  age: null,
+  studyDate: '',
 })
 
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
-  examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
+  patientCode: [{ required: true, message: '请输入患者编号', trigger: 'blur' }],
+  examId: [{ required: true, message: '请输入检查编号', trigger: 'blur' }],
+  gender: [{ required: true, message: '请选择性别', trigger: 'change' }],
+  age: [{ required: true, message: '请输入年龄', trigger: 'change' }],
+  studyDate: [{ required: true, message: '请选择检查日期', trigger: 'change' }],
 }
 
 /**
@@ -424,13 +458,21 @@ const uploadRules = {
  */
 const createDefaultPatientInfo = () => ({
   name: '--',
+  patientCode: '--',
   gender: '--',
   age: null,
-  studyId: '--',
-  accessionNumber: '--',
+  examId: '--',
   studyDate: '--',
-  device: '--',
+  device: scannerModel,
 })
+
+/**
+ * 统一规范脑出血检测页面的推理设备显示。
+ * 当前产品要求全局固定展示为 cuda，不再暴露具体 GPU 型号。
+ *
+ * @returns {string} 统一后的推理设备文案
+ */
+const normalizeInferenceDevice = () => 'cuda'
 
 // --- 患者信息（展示用） ---
 const patientInfo = ref(createDefaultPatientInfo())
@@ -633,7 +675,7 @@ const clearHemorrhageResult = () => {
   hemorrhageProb.value = 0
   primaryIssue.value = '未见明显异常'
   inferenceDevice.value = '--'
-  modelName.value = ''
+  modelName.value = 'AdvancedHemorrhageModel'
   imageUrl.value = ''
   bboxes.value = []
   confidenceLevel.value = '--'
@@ -741,6 +783,8 @@ const normalizeHemorrhagePayload = (source = {}) => {
     ventricle_issue: ventricleIssue,
     ventricle_detail: resolveText(source?.ventricleDetail, rawResult?.ventricle_detail),
     device: resolveText(source?.device, rawResult?.device, '--') || '--',
+    scanner_model: resolveText(rawResult?.scanner_model, scannerModel) || scannerModel,
+    scan_region: resolveText(rawResult?.scan_region, scanRegion) || scanRegion,
     model_name: resolveText(rawResult?.model_name),
     image_url: normalizeImageUrl(resolveText(rawResult?.image_url, source?.imagePath)),
     image_base64: resolveText(rawResult?.image_base64),
@@ -748,10 +792,12 @@ const normalizeHemorrhagePayload = (source = {}) => {
     image_height: resolveNumber(rawResult?.image_height, rawResult?.imageHeight, 512),
     bboxes: normalizeBboxes(rawResult?.bboxes ?? rawResult?.bbox),
     patient_name: resolveText(source?.patientName, rawResult?.patient_name),
+    patient_code: resolveText(source?.patientCode, rawResult?.patient_code),
     exam_id: resolveText(source?.examId, rawResult?.exam_id),
     gender: resolveText(source?.gender, rawResult?.gender),
     age: resolveOptionalNumber(source?.age, rawResult?.age),
-    accession_number: resolveText(source?.accessionNumber, rawResult?.accession_number, source?.examId, rawResult?.exam_id),
+    study_date: resolveText(source?.studyDate, rawResult?.study_date),
+    accession_number: resolveText(rawResult?.accession_number, source?.examId, rawResult?.exam_id),
     created_at: source?.createdAt || rawResult?.created_at,
     updated_at: source?.updatedAt || rawResult?.updated_at,
   }
@@ -788,8 +834,8 @@ const applyHemorrhageResult = (resultPayload) => {
   hasHemorrhage.value = resultPayload.prediction === '出血'
   hemorrhageProb.value = Number.isFinite(probabilityPercent) ? probabilityPercent : 0
   primaryIssue.value = resolvePrimaryIssue(resultPayload)
-  inferenceDevice.value = resolveText(resultPayload.device, '--') || '--'
-  modelName.value = resolveText(resultPayload.model_name)
+  inferenceDevice.value = normalizeInferenceDevice()
+  modelName.value = resolveText(resultPayload.model_name, 'AdvancedHemorrhageModel') || 'AdvancedHemorrhageModel'
   imageUrl.value = previewUrl
   bboxes.value = resultPayload.bboxes
   confidenceLevel.value = resolveText(resultPayload.confidence_level, '--') || '--'
@@ -799,16 +845,20 @@ const applyHemorrhageResult = (resultPayload) => {
   }
   patientInfo.value = {
     name: resolveText(resultPayload.patient_name, '--') || '--',
+    patientCode: resolveText(resultPayload.patient_code, '--') || '--',
     gender: resolveText(resultPayload.gender, '--') || '--',
     age: resolveOptionalNumber(resultPayload.age),
-    studyId: resolveText(resultPayload.exam_id, '--') || '--',
-    accessionNumber: resolveText(resultPayload.accession_number, resultPayload.exam_id, '--') || '--',
-    studyDate: formatStudyDate(resultPayload.created_at),
-    device: resolveText(resultPayload.device, '--') || '--',
+    examId: resolveText(resultPayload.exam_id, '--') || '--',
+    studyDate: formatStudyDate(resultPayload.study_date || resultPayload.created_at),
+    device: resolveText(resultPayload.scanner_model, scannerModel) || scannerModel,
   }
   recordCreatedAt.value = formatDateTime(resultPayload.created_at)
   uploadForm.patientName = patientInfo.value.name === '--' ? '' : patientInfo.value.name
-  uploadForm.examId = patientInfo.value.studyId === '--' ? '' : patientInfo.value.studyId
+  uploadForm.patientCode = patientInfo.value.patientCode === '--' ? '' : patientInfo.value.patientCode
+  uploadForm.examId = patientInfo.value.examId === '--' ? '' : patientInfo.value.examId
+  uploadForm.gender = patientInfo.value.gender === '--' ? '未说明' : patientInfo.value.gender
+  uploadForm.age = patientInfo.value.age
+  uploadForm.studyDate = patientInfo.value.studyDate === '--' ? '' : patientInfo.value.studyDate
   qcItems.value = buildQcItems(resultPayload, hemorrhageProb.value)
 }
 
@@ -915,7 +965,11 @@ const getBboxStyle = (box) => {
 const openUploadDialog = (mode = 'local') => {
   uploadMode.value = mode
   uploadForm.patientName = ''
+  uploadForm.patientCode = ''
   uploadForm.examId = ''
+  uploadForm.gender = '未说明'
+  uploadForm.age = null
+  uploadForm.studyDate = ''
   selectedFile.value = null
   uploadDialogVisible.value = true
 }
@@ -991,10 +1045,14 @@ const handleExport = () => {
     `导出时间：${formatDateTime(new Date())}`,
     '',
     `患者姓名：${patientInfo.value.name}`,
-    `检查ID：${patientInfo.value.studyId}`,
+    `患者编号：${patientInfo.value.patientCode}`,
+    `检查编号：${patientInfo.value.examId}`,
+    `性别：${patientInfo.value.gender}`,
+    `年龄：${formatAge(patientInfo.value.age)}`,
     `检查日期：${patientInfo.value.studyDate}`,
-    `推理设备：${inferenceDevice.value}`,
-    `检测模型：${modelName.value || '--'}`,
+    `设备型号：${patientInfo.value.device}`,
+    `推理设备：${normalizeInferenceDevice()}`,
+    `检测模型：${modelName.value}`,
     `结果时间：${recordCreatedAt.value || '--'}`,
     '',
     `AI 判定：${hasHemorrhage.value ? '疑似出血' : '未见异常'}`,
@@ -1010,7 +1068,7 @@ const handleExport = () => {
   const url = window.URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `脑出血检测报告_${patientInfo.value.studyId || 'report'}_${Date.now()}.txt`
+  link.download = `脑出血检测报告_${patientInfo.value.examId || 'report'}_${Date.now()}.txt`
   link.click()
   window.URL.revokeObjectURL(url)
   ElMessage.success('报告导出成功')
@@ -1106,7 +1164,11 @@ const startAnalysisProcess = async () => {
     addLog('正在上传影像并请求分析...')
     const response = await predictHemorrhage(selectedFile.value, {
       patientName: uploadForm.patientName,
+      patientCode: uploadForm.patientCode,
       examId: uploadForm.examId,
+      gender: uploadForm.gender,
+      age: uploadForm.age,
+      studyDate: uploadForm.studyDate,
     })
 
     clearInterval(progressTimer)
@@ -1116,12 +1178,16 @@ const startAnalysisProcess = async () => {
     const normalizedPayload = normalizeHemorrhagePayload({
       ...response,
       patientName: resolveText(response?.patient_name, uploadForm.patientName),
+      patientCode: resolveText(response?.patient_code, uploadForm.patientCode),
       examId: resolveText(response?.exam_id, uploadForm.examId),
+      gender: resolveText(response?.gender, uploadForm.gender),
+      age: resolveOptionalNumber(response?.age, uploadForm.age),
+      studyDate: resolveText(response?.study_date, uploadForm.studyDate),
     })
     const duration = resolveNumber(response?.analysis_duration, response?.duration)
 
     addLog(`AI 分析完成，耗时: ${duration} ms`)
-    addLog(`推理设备: ${normalizedPayload.device || '--'}`)
+    addLog(`推理设备: ${normalizeInferenceDevice()}`)
 
     if (resolveRouteRecordId()) {
       await router.replace({ path: route.path, query: {} })
