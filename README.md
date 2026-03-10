@@ -171,8 +171,6 @@ Medical QC SYS/
 │     └─ views/
 ├─ results/
 ├─ init.sql
-├─ predict_hemorrhage.py
-└─ training.log
 ```
 
 ### 5.1 根目录说明
@@ -181,9 +179,7 @@ Medical QC SYS/
   - 全量数据库初始化脚本，适合首次搭建数据库时执行。
 - `docs/dashboard-summary-data-model.md`
   - 首页与异常汇总页的数据来源、表关系和扩展说明。
-- `predict_hemorrhage.py`
-  - 较早期的独立预测脚本，当前运行时主链路并不依赖它。
-- `results/`、`training.log`
+- `results/`
   - 更偏向训练实验或过程记录，不属于主运行链路必需目录。
 
 ### 5.2 后端分层说明

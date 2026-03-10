@@ -80,7 +80,7 @@ try {
     $currentUser = Invoke-CurlJson ('-b "' + $doctorCookie + '" ' + $baseUrl + '/api/v1/auth/current')
     $overview = Invoke-CurlJson ('-b "' + $doctorCookie + '" ' + $baseUrl + '/api/v1/dashboard/overview')
     $summaryStats = Invoke-CurlJson ('-b "' + $doctorCookie + '" ' + $baseUrl + '/api/v1/summary/stats')
-    $adminUsers = Invoke-CurlJson ('-b "' + $adminCookie + '" ' + $baseUrl + '/api/v1/admin/users?page=1&limit=5')
+    $adminUsers = Invoke-CurlJson ('-b "' + $adminCookie + '" "' + $baseUrl + '/api/v1/admin/users?page=1&limit=5"')
 
     $mockDetect = Invoke-CurlJson ('-b "' + $doctorCookie + '" -F "file=@' + $imagePath +
         '" -F "patient_name=Smoke Patient" -F "exam_id=MOCK-' + $stamp +
@@ -91,7 +91,7 @@ try {
 
     for ($i = 0; $i -lt 20; $i++) {
         Start-Sleep -Seconds 1
-        $candidate = Invoke-CurlJson ('-b "' + $doctorCookie + '" ' + $baseUrl + '/api/v1/quality/tasks/' + $taskId)
+        $candidate = Invoke-CurlJson ('-b "' + $doctorCookie + '" "' + $baseUrl + '/api/v1/quality/tasks/' + $taskId + '"')
         if ($candidate.status -eq "SUCCESS") {
             $mockResult = $candidate
             break
@@ -104,8 +104,8 @@ try {
         '" -F "gender=男" -F "age=35" -F "study_date=2026-03-10" -F "source_mode=local" ' +
         $baseUrl + '/api/v1/quality/hemorrhage')
 
-    $history = Invoke-CurlJson ('-b "' + $doctorCookie + '" ' + $baseUrl + '/api/v1/quality/hemorrhage/history?limit=5')
-    $summaryRecent = Invoke-CurlJson ('-b "' + $doctorCookie + '" ' + $baseUrl + '/api/v1/summary/recent?page=1&limit=5')
+    $history = Invoke-CurlJson ('-b "' + $doctorCookie + '" "' + $baseUrl + '/api/v1/quality/hemorrhage/history?limit=5"')
+    $summaryRecent = Invoke-CurlJson ('-b "' + $doctorCookie + '" "' + $baseUrl + '/api/v1/summary/recent?page=1&limit=5"')
 
     [PSCustomObject]@{
         doctorLoginUser      = $doctorLogin.username

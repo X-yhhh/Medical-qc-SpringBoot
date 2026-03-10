@@ -72,7 +72,7 @@
         </div>
       </template>
 
-      <el-table :data="tableData" border stripe v-loading="loading">
+      <el-table :data="tableData" border stripe v-loading="loading" class="patient-table">
         <el-table-column label="影像图片" width="110" align="center">
           <template #default="{ row }">
             <el-image
@@ -580,6 +580,63 @@ watch(taskType, () => {
 .table-card {
   border-radius: 12px;
   margin-bottom: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    0 12px 30px rgba(15, 23, 42, 0.06),
+    0 3px 10px rgba(15, 23, 42, 0.04);
+}
+
+.filter-card :deep(.el-card__body) {
+  position: relative;
+  z-index: 1;
+}
+
+.table-card {
+  overflow: visible;
+}
+
+.table-card :deep(.el-card__header) {
+  border-bottom: 1px solid #eef2f7;
+}
+
+.table-card :deep(.el-card__body) {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  border-radius: 0 0 12px 12px;
+}
+
+.patient-table :deep(.el-table__inner-wrapper) {
+  border-radius: 10px;
+}
+
+.patient-table :deep(.el-table__body-wrapper),
+.patient-table :deep(.el-scrollbar__wrap) {
+  overflow: auto;
+}
+
+.patient-table :deep(.el-table__fixed),
+.patient-table :deep(.el-table__fixed-right),
+.patient-table :deep(.el-table-fixed-column--left.is-first-column),
+.patient-table :deep(.el-table-fixed-column--right.is-last-column) {
+  box-shadow: none !important;
+}
+
+.patient-table :deep(.el-table__fixed::before),
+.patient-table :deep(.el-table__fixed-right::before) {
+  width: 10px;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0));
+}
+
+.patient-table :deep(.el-table__fixed-right::before) {
+  left: 0;
+}
+
+.patient-table :deep(.el-table__fixed::before) {
+  right: 0;
+  left: auto;
+  background: linear-gradient(270deg, rgba(15, 23, 42, 0.06), rgba(15, 23, 42, 0));
 }
 
 .toolbar {
