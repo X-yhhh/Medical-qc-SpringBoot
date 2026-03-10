@@ -83,11 +83,18 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
             return;
         }
 
-        logger.warn("Detected unhealthy Python Model Server on {}:{}, attempting cleanup and restart.", host, port);
+        logger.info("Detected unhealthy Python Model Server on {}:{}, attempting cleanup and restart.", host, port);
         cleanupUnhealthyModelServer(port);
 
         if (isWebSocketHealthy(serverUri, 2)) {
             logger.info("Python Model Server recovered before autostart on {}:{}, skip creating a new process.", host, port);
+            return;
+        }
+
+        List<Long> listeningProcessIds = findListeningProcessIds(port);
+        if (!listeningProcessIds.isEmpty()) {
+            logger.warn("Port {} is still occupied by PID(s) {} after cleanup, skip Python Model Server autostart.",
+                    port, listeningProcessIds);
             return;
         }
 
@@ -301,14 +308,22 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
                     String commandLine = processHandle.info().commandLine().orElse("");
                     String command = processHandle.info().command().orElse("");
                     String processSummary = (commandLine + " " + command).toLowerCase(Locale.ROOT);
+                    String processDescriptor = commandLine.isBlank() ? command : commandLine;
+                    boolean looksLikePythonExecutable = command.toLowerCase(Locale.ROOT).endsWith("python.exe")
+                            || command.toLowerCase(Locale.ROOT).endsWith("python");
 
-                    if (!processSummary.contains("model_server.py")) {
+                    if (!processSummary.contains("model_server.py") && !looksLikePythonExecutable) {
                         logger.warn("Port {} is occupied by non-model process PID={}, skip cleanup. command={}",
-                                port, pid, commandLine);
+                                port, pid, processDescriptor);
                         return;
                     }
 
-                    logger.warn("Stopping unhealthy Python Model Server process PID={}, command={}", pid, commandLine);
+                    if (!processSummary.contains("model_server.py") && looksLikePythonExecutable) {
+                        logger.info("Port {} is occupied by a Python process with incomplete command metadata, treat PID={} as a stale model process. command={}",
+                                port, pid, processDescriptor);
+                    }
+
+                    logger.info("Stopping unhealthy Python Model Server process PID={}, command={}", pid, processDescriptor);
                     processHandle.destroy();
                     try {
                         processHandle.onExit().get(5, TimeUnit.SECONDS);

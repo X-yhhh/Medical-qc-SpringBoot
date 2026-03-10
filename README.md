@@ -88,6 +88,8 @@ Python 子模块运行在 `medical-qc-backend/python_model/` 下，以 WebSocket
 
 - Java 17
 - Spring Boot 3.2.2
+- Embedded Tomcat 10.1.52
+- Log4j2
 - MyBatis-Plus 3.5.5
 - MySQL 8
 - Redis
@@ -95,7 +97,7 @@ Python 子模块运行在 `medical-qc-backend/python_model/` 下，以 WebSocket
 - Spring Cache
 - ActiveMQ
 - Java-WebSocket
-- Maven
+- Maven 3.9.13
 
 ### 4.2 前端
 
@@ -364,11 +366,13 @@ Medical QC SYS/
 推荐按当前代码默认行为准备环境：
 
 - 操作系统：Windows 优先
-- JDK：17+
-- Maven：3.9+
-- Node.js：`^20.19.0` 或 `>=22.12.0`
-- npm：建议跟随 Node 版本
-- Python：3.10+
+- JDK：17，当前统一安装路径为 `D:\JDK17`
+- Maven：3.9.13，当前统一安装路径为 `E:\Maven\apache-maven-3.9.13`
+- Maven 本地仓库：`E:\Maven\maven_jar`
+- Node.js：`^20.19.0` 或 `>=22.12.0`，当前本机已验证版本为 `v24.13.0`
+- npm：当前本机已验证版本为 `11.6.2`
+- Tomcat：10.1.52（可选独立运行环境，当前目录为 `D:\Apache Tomcat\apache-tomcat-10.1.52`）
+- Python：3.10+，推荐优先使用项目根目录下的 `.venv`
 - MySQL：8.0+
 - Redis：6.0+
 - ActiveMQ：5.16.6+
@@ -383,11 +387,19 @@ Medical QC SYS/
 - ActiveMQ 自动拉起调用的是 `activemq.bat`
 - Python 解释器自动探测优先找 `.venv\\Scripts\\python.exe`
 
+### 10.2 Java / Maven / Tomcat 运行约定
+
+- 机器级与用户级 `JAVA_HOME` / `JDK_HOME` 当前统一指向 `D:\JDK17`，后端构建与运行均按 JDK 17 执行。
+- 机器级与用户级 `MAVEN_HOME` / `M2_HOME` 当前统一指向 `E:\Maven\apache-maven-3.9.13`，本机唯一 Maven 本地仓库为 `E:\Maven\maven_jar`。
+- 后端默认以 `Spring Boot` 内嵌 Tomcat 模式运行，直接执行 `mvn spring-boot:run` 即可，不需要手工部署到外部 Tomcat。
+- 如需保留独立 Tomcat 运行环境，当前统一目录为 `D:\Apache Tomcat\apache-tomcat-10.1.52`，并对应 `CATALINA_HOME` / `CATALINA_BASE` / `TOMCAT_HOME`。
+
 ## 11. 关键配置
 
 关键配置位于：
 
 - `medical-qc-backend/src/main/resources/application.properties`
+- `medical-qc-backend/src/main/resources/log4j2-spring.xml`
 - `medical-qc-frontend/.env.development`
 - `medical-qc-frontend/vite.config.js`
 
@@ -403,6 +415,7 @@ Medical QC SYS/
 - Python 模型地址：`ws://localhost:8765`
 - Python 模型自动启动：`true`
 - ActiveMQ 自动启动：`true`
+- 日志实现：Log4j2，日志文件默认输出到 `medical-qc-backend/logs/medical-qc-backend.log`
 
 ### 11.2 需要重点修改的配置
 

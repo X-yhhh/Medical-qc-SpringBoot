@@ -29,11 +29,6 @@
         <result column="updated_at" property="updatedAt" />
     </resultMap>
 
-    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO hemorrhage_records (user_id, patient_name, patient_code, exam_id, gender, age, study_date, image_path, prediction, qc_status, confidence_level, hemorrhage_probability, no_hemorrhage_probability, analysis_duration, created_at, midline_shift, shift_score, midline_detail, ventricle_issue, ventricle_detail, device, raw_result_json, updated_at)
-        VALUES (#{userId}, #{patientName}, #{patientCode}, #{examId}, #{gender}, #{age}, #{studyDate}, #{imagePath}, #{prediction}, #{qcStatus}, #{confidenceLevel}, #{hemorrhageProbability}, #{noHemorrhageProbability}, #{analysisDuration}, #{createdAt}, #{midlineShift}, #{shiftScore}, #{midlineDetail}, #{ventricleIssue}, #{ventricleDetail}, #{device}, #{rawResultJson}, #{updatedAt})
-    </insert>
-
     <select id="findByUserId" resultMap="BaseResultMap">
         SELECT * FROM hemorrhage_records WHERE user_id = #{userId} ORDER BY created_at DESC
     </select>

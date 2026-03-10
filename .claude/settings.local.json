@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mysql -u root -p123456 -e \"USE medical_qc_sys; SELECT COUNT\\(*\\) as record_count FROM pacs_study_cache;\")",
+      "Bash(netstat -ano)",
+      "Bash(findstr :8765)",
+      "Bash(taskkill //F //PID 51036)",
+      "Bash(findstr :8080)",
+      "Bash(mvn spring-boot:run)",
+      "Bash(taskkill //F //PID 660)",
+      "Bash(taskkill //F //PID 11012 //PID 1316 //PID 23896)"
+    ]
+  }
+}

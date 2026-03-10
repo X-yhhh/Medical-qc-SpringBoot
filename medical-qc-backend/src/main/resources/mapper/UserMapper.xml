@@ -25,11 +25,6 @@
         SELECT * FROM users WHERE email = #{email}
     </select>
 
-    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO users (username, email, password_hash, full_name, hospital, department, role_id, is_active, created_at, updated_at)
-        VALUES (#{username}, #{email}, #{passwordHash}, #{fullName}, #{hospital}, #{department}, #{roleId}, #{isActive}, NOW(), NOW())
-    </insert>
-
     <update id="updateAccessToken">
         UPDATE users SET access_token = #{accessToken} WHERE username = #{username}
     </update>
