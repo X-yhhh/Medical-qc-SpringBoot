@@ -2,4 +2,4 @@
 setlocal
 
 cd /d "%~dp0.."
-call npm run dev
+call npm.cmd run dev

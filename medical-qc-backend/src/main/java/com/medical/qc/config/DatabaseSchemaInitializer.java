@@ -59,6 +59,12 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
         } catch (Exception exception) {
             logger.error("Quality patient info schema initialization failed.", exception);
         }
+
+        try {
+            ensureIssueWorkflowSchema();
+        } catch (Exception exception) {
+            logger.error("Issue workflow schema initialization failed.", exception);
+        }
     }
 
     /**
@@ -69,6 +75,9 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
         populator.setSqlScriptEncoding("UTF-8");
         populator.addScript(new ClassPathResource("sql/create_qc_history_tables_v1.sql"));
         populator.addScript(new ClassPathResource("sql/create_qc_issue_tables_v1.sql"));
+        populator.addScript(new ClassPathResource("sql/create_qc_issue_capa_tables_v1.sql"));
+        populator.addScript(new ClassPathResource("sql/create_qc_rule_tables_v1.sql"));
+        populator.addScript(new ClassPathResource("sql/create_qc_task_tables_v1.sql"));
         populator.addScript(new ClassPathResource("sql/create_quality_patient_tables_v1.sql"));
 
         try {
@@ -286,6 +295,32 @@ public class DatabaseSchemaInitializer implements CommandLineRunner {
                 addColumnIfMissing(connection, statement, tableName, "image_path",
                         "ALTER TABLE `" + tableName + "` ADD COLUMN `image_path` varchar(500) DEFAULT NULL COMMENT '患者影像图片路径' AFTER `study_date`");
             }
+        }
+    }
+
+    /**
+     * 为异常工单表补齐责任角色与 SLA 字段。
+     */
+    private void ensureIssueWorkflowSchema() throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            if (!tableExists(connection, "qc_issue_records")) {
+                return;
+            }
+
+            addColumnIfMissing(connection, statement, "qc_issue_records", "responsible_role",
+                    "ALTER TABLE `qc_issue_records` ADD COLUMN `responsible_role` varchar(20) DEFAULT NULL COMMENT '责任角色：admin/doctor' AFTER `priority`");
+            addColumnIfMissing(connection, statement, "qc_issue_records", "assignee_user_id",
+                    "ALTER TABLE `qc_issue_records` ADD COLUMN `assignee_user_id` bigint DEFAULT NULL COMMENT '当前处理人' AFTER `priority`");
+            addColumnIfMissing(connection, statement, "qc_issue_records", "sla_hours",
+                    "ALTER TABLE `qc_issue_records` ADD COLUMN `sla_hours` int DEFAULT NULL COMMENT 'SLA时限（小时）' AFTER `responsible_role`");
+            addColumnIfMissing(connection, statement, "qc_issue_records", "due_at",
+                    "ALTER TABLE `qc_issue_records` ADD COLUMN `due_at` datetime DEFAULT NULL COMMENT 'SLA截止时间' AFTER `sla_hours`");
+
+            addIndexIfMissing(connection, statement, "qc_issue_records", "idx_qc_issue_user_due_at",
+                    "ALTER TABLE `qc_issue_records` ADD INDEX `idx_qc_issue_user_due_at` (`user_id`, `due_at`)");
+            addIndexIfMissing(connection, statement, "qc_issue_records", "idx_qc_issue_assignee",
+                    "ALTER TABLE `qc_issue_records` ADD INDEX `idx_qc_issue_assignee` (`assignee_user_id`)");
         }
     }
 

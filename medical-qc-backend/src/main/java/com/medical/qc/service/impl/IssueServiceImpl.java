@@ -1,17 +1,27 @@
 package com.medical.qc.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.medical.qc.bean.IssueWorkflowUpdateReq;
+import com.medical.qc.common.AuthRole;
 import com.medical.qc.entity.HemorrhageRecord;
+import com.medical.qc.entity.QcIssueCapaRecord;
 import com.medical.qc.entity.QcIssueHandleLog;
 import com.medical.qc.entity.QcIssueRecord;
+import com.medical.qc.entity.QcRuleConfig;
+import com.medical.qc.entity.QcTaskRecord;
+import com.medical.qc.entity.User;
 import com.medical.qc.mapper.HemorrhageRecordMapper;
+import com.medical.qc.mapper.QcIssueCapaRecordMapper;
 import com.medical.qc.mapper.QcIssueHandleLogMapper;
 import com.medical.qc.mapper.QcIssueRecordMapper;
+import com.medical.qc.mapper.QcTaskRecordMapper;
+import com.medical.qc.mapper.UserMapper;
 import com.medical.qc.service.IssueService;
+import com.medical.qc.service.QcRuleConfigService;
 import com.medical.qc.service.QualityPatientInfoService;
 import com.medical.qc.support.HemorrhageIssueSupport;
+import com.medical.qc.support.MockQualityAnalysisSupport;
 import com.medical.qc.support.QualityPatientTaskSupport;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -51,10 +61,25 @@ public class IssueServiceImpl implements IssueService {
     private QcIssueHandleLogMapper qcIssueHandleLogMapper;
 
     @Autowired
+    private QcIssueCapaRecordMapper qcIssueCapaRecordMapper;
+
+    @Autowired
     private HemorrhageRecordMapper hemorrhageRecordMapper;
 
     @Autowired
+    private QcTaskRecordMapper qcTaskRecordMapper;
+
+    @Autowired
     private QualityPatientInfoService qualityPatientInfoService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private QcRuleConfigService qcRuleConfigService;
+
+    @Autowired
+    private UserMapper userMapper;
 
     @Override
     public void syncHemorrhageIssue(HemorrhageRecord record) {
@@ -63,6 +88,15 @@ public class IssueServiceImpl implements IssueService {
         }
 
         upsertHemorrhageIssue(record);
+    }
+
+    @Override
+    public void syncQualityTaskIssue(QcTaskRecord taskRecord) {
+        if (!isAbnormalQualityTask(taskRecord) || taskRecord.getUserId() == null || taskRecord.getId() == null) {
+            return;
+        }
+
+        upsertQualityTaskIssue(taskRecord);
     }
 
     @Override
@@ -76,8 +110,22 @@ public class IssueServiceImpl implements IssueService {
     }
 
     @Override
+    public void syncQualityTaskIssues(Long userId) {
+        QueryWrapper<QcTaskRecord> queryWrapper = new QueryWrapper<QcTaskRecord>()
+                .eq("task_status", "SUCCESS")
+                .orderByDesc("submitted_at");
+        if (userId != null) {
+            queryWrapper.eq("user_id", userId);
+        }
+
+        qcTaskRecordMapper.selectList(queryWrapper).stream()
+                .filter(this::isAbnormalQualityTask)
+                .forEach(this::upsertQualityTaskIssue);
+    }
+
+    @Override
     public long countPendingIssues(Long userId) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         return listIssuesByUserId(userId).stream()
                 .filter(this::isUnresolvedIssue)
                 .count();
@@ -85,7 +133,7 @@ public class IssueServiceImpl implements IssueService {
 
     @Override
     public long countHighRiskIssues(Long userId) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         return listIssuesByUserId(userId).stream()
                 .filter(this::isUnresolvedIssue)
                 .filter(issue -> Objects.equals("高", issue.getPriority()))
@@ -94,7 +142,7 @@ public class IssueServiceImpl implements IssueService {
 
     @Override
     public List<Map<String, Object>> getRiskAlerts(Long userId, int limit) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         int normalizedLimit = Math.max(1, Math.min(limit, 10));
 
         return listIssuesByUserId(userId).stream()
@@ -109,7 +157,7 @@ public class IssueServiceImpl implements IssueService {
 
     @Override
     public Map<String, Object> getSummaryStats(Long userId) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         List<QcIssueRecord> records = listIssuesByUserId(userId);
         LocalDate today = LocalDate.now();
 
@@ -146,7 +194,7 @@ public class IssueServiceImpl implements IssueService {
 
     @Override
     public Map<String, Object> getIssueTrend(Long userId, int days) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         int normalizedDays = Math.max(1, days);
         List<QcIssueRecord> records = listIssuesByUserId(userId);
         Map<LocalDate, Long> issueCountByDate = records.stream()
@@ -170,7 +218,7 @@ public class IssueServiceImpl implements IssueService {
 
     @Override
     public List<Map<String, Object>> getIssueDistribution(Long userId) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         return listIssuesByUserId(userId).stream()
                 .collect(Collectors.groupingBy(
                         issue -> StringUtils.hasText(issue.getIssueType()) ? issue.getIssueType() : "未见明显异常",
@@ -189,7 +237,7 @@ public class IssueServiceImpl implements IssueService {
 
     @Override
     public Map<String, Object> getIssuePage(Long userId, int page, int limit, String query, String status) {
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
         int normalizedPage = normalizePage(page);
         int normalizedLimit = normalizeLimit(limit);
         List<QcIssueRecord> filteredRecords = listIssuesByUserId(userId).stream()
@@ -217,7 +265,7 @@ public class IssueServiceImpl implements IssueService {
             throw new IllegalArgumentException("异常工单 ID 不能为空");
         }
 
-        syncHemorrhageIssues(userId);
+        syncAllIssues(userId);
 
         QcIssueRecord issueRecord = qcIssueRecordMapper.selectById(issueId);
         if (issueRecord == null || (userId != null && !Objects.equals(issueRecord.getUserId(), userId))) {
@@ -226,7 +274,20 @@ public class IssueServiceImpl implements IssueService {
 
         Map<String, Object> detail = new HashMap<>(toSummaryItem(issueRecord));
         detail.put("sourceDetail", buildSourceDetail(issueRecord));
+        detail.put("capa", buildCapaDetail(issueRecord.getId()));
+        detail.put("handleLogs", buildHandleLogs(issueRecord.getId()));
         return detail;
+    }
+
+    @Override
+    public List<Map<String, Object>> getAssignableUsers() {
+        return userMapper.selectList(new QueryWrapper<User>()
+                        .eq("is_active", true)
+                        .orderByAsc("role_id")
+                        .orderByAsc("username"))
+                .stream()
+                .map(this::toAssignableUserItem)
+                .toList();
     }
 
     @Override
@@ -258,14 +319,83 @@ public class IssueServiceImpl implements IssueService {
         return toSummaryItem(qcIssueRecordMapper.selectById(issueId));
     }
 
+    @Override
+    public Map<String, Object> updateIssueWorkflow(Long userId, Long operatorId, Long issueId, IssueWorkflowUpdateReq request) {
+        if (issueId == null) {
+            throw new IllegalArgumentException("异常工单 ID 不能为空");
+        }
+
+        QcIssueRecord issueRecord = qcIssueRecordMapper.selectById(issueId);
+        if (issueRecord == null || (userId != null && !Objects.equals(issueRecord.getUserId(), userId))) {
+            throw new IllegalArgumentException("异常工单不存在");
+        }
+
+        IssueWorkflowUpdateReq normalizedRequest = request == null ? new IssueWorkflowUpdateReq() : request;
+        LocalDateTime now = LocalDateTime.now();
+        String nextStatus = StringUtils.hasText(normalizedRequest.getStatus())
+                ? normalizedRequest.getStatus().trim()
+                : issueRecord.getStatus();
+        if (!isSupportedStatus(nextStatus)) {
+            throw new IllegalArgumentException("不支持的工单状态");
+        }
+
+        Long assigneeUserId = resolveAssigneeUserId(normalizedRequest.getAssigneeUserId());
+        String remark = trimToNull(normalizedRequest.getRemark());
+        String beforeStatus = issueRecord.getStatus();
+        Long beforeAssigneeUserId = issueRecord.getAssigneeUserId();
+
+        issueRecord.setStatus(nextStatus);
+        issueRecord.setAssigneeUserId(assigneeUserId);
+        if (remark != null) {
+            issueRecord.setLastRemark(remark);
+        }
+        issueRecord.setUpdatedAt(now);
+        issueRecord.setResolvedAt(STATUS_RESOLVED.equals(nextStatus) ? now : null);
+        qcIssueRecordMapper.updateById(issueRecord);
+
+        upsertCapaRecord(issueId, operatorId, normalizedRequest);
+
+        if (!Objects.equals(beforeAssigneeUserId, assigneeUserId)) {
+            String assignmentRemark = buildAssignmentRemark(beforeAssigneeUserId, assigneeUserId);
+            insertHandleLog(issueId, operatorId, "assign", beforeStatus, issueRecord.getStatus(), assignmentRemark, now);
+        }
+
+        if (!Objects.equals(beforeStatus, nextStatus) || remark != null) {
+            insertHandleLog(issueId, operatorId, "update_status", beforeStatus, nextStatus, remark, now);
+        }
+
+        if (hasCapaContent(normalizedRequest)) {
+            insertHandleLog(issueId, operatorId, "update_capa", issueRecord.getStatus(), issueRecord.getStatus(), "更新 CAPA 整改记录", now);
+        }
+
+        return getIssueDetail(userId, issueId);
+    }
+
+    /**
+     * 查询前统一回填所有来源的异常工单，避免历史数据因接入顺序不同而遗漏。
+     */
+    private void syncAllIssues(Long userId) {
+        syncHemorrhageIssues(userId);
+        syncQualityTaskIssues(userId);
+    }
+
     /**
      * 将脑出血历史记录上卷为异常工单。
      * 为避免覆盖人工处理结果，仅同步来源字段与异常展示字段，保留状态与处理备注。
      */
     private void upsertHemorrhageIssue(HemorrhageRecord record) {
         String issueType = HemorrhageIssueSupport.resolvePrimaryIssue(record);
-        String priority = HemorrhageIssueSupport.resolvePriority(issueType);
+        var appliedRule = resolveAppliedRule(SOURCE_TYPE_HEMORRHAGE, issueType);
+        if (shouldSkipIssueCreation(appliedRule)) {
+            return;
+        }
+
+        String priority = resolveIssuePriority(issueType, appliedRule);
         String description = HemorrhageIssueSupport.buildIssueDescription(issueType);
+        String responsibleRole = resolveResponsibleRole(appliedRule);
+        Integer slaHours = resolveSlaHours(appliedRule);
+        LocalDateTime detectedAt = record.getCreatedAt() == null ? LocalDateTime.now() : record.getCreatedAt();
+        LocalDateTime dueAt = calculateDueAt(detectedAt, slaHours);
 
         QcIssueRecord issueRecord = qcIssueRecordMapper.selectOne(new QueryWrapper<QcIssueRecord>()
                 .eq("user_id", record.getUserId())
@@ -282,9 +412,12 @@ public class IssueServiceImpl implements IssueService {
             newIssueRecord.setIssueType(issueType);
             newIssueRecord.setDescription(description);
             newIssueRecord.setPriority(priority);
+            newIssueRecord.setResponsibleRole(responsibleRole);
+            newIssueRecord.setSlaHours(slaHours);
+            newIssueRecord.setDueAt(dueAt);
             newIssueRecord.setStatus(STATUS_PENDING);
             newIssueRecord.setImageUrl(resolvePreferredImageUrl(record));
-            newIssueRecord.setCreatedAt(record.getCreatedAt() == null ? LocalDateTime.now() : record.getCreatedAt());
+            newIssueRecord.setCreatedAt(detectedAt);
             newIssueRecord.setUpdatedAt(record.getUpdatedAt() == null ? newIssueRecord.getCreatedAt() : record.getUpdatedAt());
             qcIssueRecordMapper.insert(newIssueRecord);
 
@@ -305,10 +438,96 @@ public class IssueServiceImpl implements IssueService {
         changed |= updateStringField(issueRecord.getIssueType(), issueType, issueRecord::setIssueType);
         changed |= updateStringField(issueRecord.getDescription(), description, issueRecord::setDescription);
         changed |= updateStringField(issueRecord.getPriority(), priority, issueRecord::setPriority);
+        changed |= updateStringField(issueRecord.getResponsibleRole(), responsibleRole, issueRecord::setResponsibleRole);
         changed |= updateStringField(issueRecord.getImageUrl(), resolvePreferredImageUrl(record), issueRecord::setImageUrl);
+        changed |= updateIntegerField(issueRecord.getSlaHours(), slaHours, issueRecord::setSlaHours);
+        changed |= updateDateTimeField(issueRecord.getDueAt(), dueAt, issueRecord::setDueAt);
 
         if (issueRecord.getCreatedAt() == null && record.getCreatedAt() != null) {
             issueRecord.setCreatedAt(record.getCreatedAt());
+            changed = true;
+        }
+
+        if (!StringUtils.hasText(issueRecord.getStatus())) {
+            issueRecord.setStatus(STATUS_PENDING);
+            changed = true;
+        }
+
+        if (changed) {
+            issueRecord.setUpdatedAt(LocalDateTime.now());
+            qcIssueRecordMapper.updateById(issueRecord);
+        }
+    }
+
+    /**
+     * 将异步质控任务上卷为异常工单。
+     */
+    private void upsertQualityTaskIssue(QcTaskRecord taskRecord) {
+        String issueType = StringUtils.hasText(taskRecord.getPrimaryIssue())
+                ? taskRecord.getPrimaryIssue()
+                : "图像质量异常";
+        var appliedRule = resolveAppliedRule(taskRecord.getTaskType(), issueType);
+        if (shouldSkipIssueCreation(appliedRule)) {
+            return;
+        }
+
+        String description = buildQualityTaskIssueDescription(taskRecord, issueType);
+        String priority = resolveQualityTaskPriority(taskRecord, appliedRule);
+        String responsibleRole = resolveResponsibleRole(appliedRule);
+        Integer slaHours = resolveSlaHours(appliedRule);
+        LocalDateTime detectedAt = firstNonNull(
+                taskRecord.getCompletedAt(),
+                taskRecord.getUpdatedAt(),
+                taskRecord.getSubmittedAt(),
+                LocalDateTime.now());
+        LocalDateTime dueAt = calculateDueAt(detectedAt, slaHours);
+
+        QcIssueRecord issueRecord = qcIssueRecordMapper.selectOne(new QueryWrapper<QcIssueRecord>()
+                .eq("user_id", taskRecord.getUserId())
+                .eq("source_type", taskRecord.getTaskType())
+                .eq("source_record_id", taskRecord.getId()));
+
+        if (issueRecord == null) {
+            QcIssueRecord newIssueRecord = new QcIssueRecord();
+            newIssueRecord.setUserId(taskRecord.getUserId());
+            newIssueRecord.setSourceType(taskRecord.getTaskType());
+            newIssueRecord.setSourceRecordId(taskRecord.getId());
+            newIssueRecord.setPatientName(taskRecord.getPatientName());
+            newIssueRecord.setExamId(taskRecord.getExamId());
+            newIssueRecord.setIssueType(issueType);
+            newIssueRecord.setDescription(description);
+            newIssueRecord.setPriority(priority);
+            newIssueRecord.setResponsibleRole(responsibleRole);
+            newIssueRecord.setSlaHours(slaHours);
+            newIssueRecord.setDueAt(dueAt);
+            newIssueRecord.setStatus(STATUS_PENDING);
+            newIssueRecord.setCreatedAt(detectedAt);
+            newIssueRecord.setUpdatedAt(detectedAt);
+            qcIssueRecordMapper.insert(newIssueRecord);
+
+            insertHandleLog(
+                    newIssueRecord.getId(),
+                    taskRecord.getUserId(),
+                    "create",
+                    null,
+                    STATUS_PENDING,
+                    "由异步质控任务结果自动生成异常工单",
+                    detectedAt);
+            return;
+        }
+
+        boolean changed = false;
+        changed |= updateStringField(issueRecord.getPatientName(), taskRecord.getPatientName(), issueRecord::setPatientName);
+        changed |= updateStringField(issueRecord.getExamId(), taskRecord.getExamId(), issueRecord::setExamId);
+        changed |= updateStringField(issueRecord.getIssueType(), issueType, issueRecord::setIssueType);
+        changed |= updateStringField(issueRecord.getDescription(), description, issueRecord::setDescription);
+        changed |= updateStringField(issueRecord.getPriority(), priority, issueRecord::setPriority);
+        changed |= updateStringField(issueRecord.getResponsibleRole(), responsibleRole, issueRecord::setResponsibleRole);
+        changed |= updateIntegerField(issueRecord.getSlaHours(), slaHours, issueRecord::setSlaHours);
+        changed |= updateDateTimeField(issueRecord.getDueAt(), dueAt, issueRecord::setDueAt);
+
+        if (issueRecord.getCreatedAt() == null) {
+            issueRecord.setCreatedAt(firstNonNull(taskRecord.getCompletedAt(), taskRecord.getSubmittedAt(), LocalDateTime.now()));
             changed = true;
         }
 
@@ -373,10 +592,82 @@ public class IssueServiceImpl implements IssueService {
         item.put("date", formatDateTime(issueRecord.getCreatedAt(), SUMMARY_TIME_FORMATTER));
         item.put("status", issueRecord.getStatus());
         item.put("priority", issueRecord.getPriority());
+        item.put("assigneeUserId", issueRecord.getAssigneeUserId());
+        item.put("assigneeName", resolveUserDisplayName(issueRecord.getAssigneeUserId()));
+        item.put("responsibleRole", issueRecord.getResponsibleRole());
+        item.put("responsibleRoleLabel", resolveResponsibleRoleLabel(issueRecord.getResponsibleRole()));
+        item.put("slaHours", issueRecord.getSlaHours());
+        item.put("dueAt", formatDateTime(issueRecord.getDueAt(), SUMMARY_TIME_FORMATTER));
+        item.put("overdue", isOverdueIssue(issueRecord));
         item.put("imageUrl", normalizeImageUrl(issueRecord.getImageUrl()));
         item.put("remark", issueRecord.getLastRemark());
         item.put("resolvedAt", formatDateTime(issueRecord.getResolvedAt(), SUMMARY_TIME_FORMATTER));
         item.put("timestamp", issueRecord.getCreatedAt() == null ? null : Date.from(issueRecord.getCreatedAt().atZone(ZoneId.systemDefault()).toInstant()));
+        return item;
+    }
+
+    private Map<String, Object> buildCapaDetail(Long issueId) {
+        if (issueId == null) {
+            return null;
+        }
+
+        QcIssueCapaRecord capaRecord = qcIssueCapaRecordMapper.selectOne(new QueryWrapper<QcIssueCapaRecord>()
+                .eq("issue_id", issueId)
+                .last("LIMIT 1"));
+        if (capaRecord == null) {
+            return null;
+        }
+
+        Map<String, Object> item = new HashMap<>();
+        item.put("rootCauseCategory", capaRecord.getRootCauseCategory());
+        item.put("rootCauseDetail", capaRecord.getRootCauseDetail());
+        item.put("correctiveAction", capaRecord.getCorrectiveAction());
+        item.put("preventiveAction", capaRecord.getPreventiveAction());
+        item.put("verificationNote", capaRecord.getVerificationNote());
+        item.put("updatedBy", capaRecord.getUpdatedBy());
+        item.put("updatedByName", resolveUserDisplayName(capaRecord.getUpdatedBy()));
+        item.put("createdAt", formatDateTime(capaRecord.getCreatedAt(), SUMMARY_TIME_FORMATTER));
+        item.put("updatedAt", formatDateTime(capaRecord.getUpdatedAt(), SUMMARY_TIME_FORMATTER));
+        return item;
+    }
+
+    private List<Map<String, Object>> buildHandleLogs(Long issueId) {
+        if (issueId == null) {
+            return List.of();
+        }
+
+        return qcIssueHandleLogMapper.selectList(new QueryWrapper<QcIssueHandleLog>()
+                        .eq("issue_id", issueId)
+                        .orderByDesc("created_at"))
+                .stream()
+                .map(this::toHandleLogItem)
+                .toList();
+    }
+
+    private Map<String, Object> toHandleLogItem(QcIssueHandleLog handleLog) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", handleLog.getId());
+        item.put("actionType", handleLog.getActionType());
+        item.put("actionTypeLabel", resolveActionTypeLabel(handleLog.getActionType()));
+        item.put("beforeStatus", handleLog.getBeforeStatus());
+        item.put("afterStatus", handleLog.getAfterStatus());
+        item.put("remark", handleLog.getRemark());
+        item.put("operatorId", handleLog.getOperatorId());
+        item.put("operatorName", resolveUserDisplayName(handleLog.getOperatorId()));
+        item.put("createdAt", formatDateTime(handleLog.getCreatedAt(), SUMMARY_TIME_FORMATTER));
+        return item;
+    }
+
+    private Map<String, Object> toAssignableUserItem(User user) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", user.getId());
+        item.put("username", user.getUsername());
+        item.put("fullName", user.getFullName());
+        item.put("displayName", resolveUserDisplayName(user));
+        item.put("role", AuthRole.fromRoleId(user.getRoleId()).getCode());
+        item.put("roleLabel", AuthRole.fromRoleId(user.getRoleId()).getDisplayName());
+        item.put("department", user.getDepartment());
+        item.put("hospital", user.getHospital());
         return item;
     }
 
@@ -387,20 +678,35 @@ public class IssueServiceImpl implements IssueService {
      * @return 来源明细；若暂未接入则返回 null
      */
     private Map<String, Object> buildSourceDetail(QcIssueRecord issueRecord) {
-        if (!SOURCE_TYPE_HEMORRHAGE.equals(issueRecord.getSourceType()) || issueRecord.getSourceRecordId() == null) {
+        if (issueRecord.getSourceRecordId() == null) {
             return null;
         }
 
-        HemorrhageRecord record = hemorrhageRecordMapper.selectOne(new QueryWrapper<HemorrhageRecord>()
-                .eq("id", issueRecord.getSourceRecordId())
-                .eq("user_id", issueRecord.getUserId())
-                .last("LIMIT 1"));
+        if (SOURCE_TYPE_HEMORRHAGE.equals(issueRecord.getSourceType())) {
+            HemorrhageRecord record = hemorrhageRecordMapper.selectOne(new QueryWrapper<HemorrhageRecord>()
+                    .eq("id", issueRecord.getSourceRecordId())
+                    .eq("user_id", issueRecord.getUserId())
+                    .last("LIMIT 1"));
 
-        if (record == null) {
-            return null;
+            if (record == null) {
+                return null;
+            }
+            return toHemorrhageDetailItem(record);
         }
 
-        return toHemorrhageDetailItem(record);
+        if (MockQualityAnalysisSupport.isSupportedTaskType(issueRecord.getSourceType())) {
+            QcTaskRecord taskRecord = qcTaskRecordMapper.selectOne(new QueryWrapper<QcTaskRecord>()
+                    .eq("id", issueRecord.getSourceRecordId())
+                    .eq("user_id", issueRecord.getUserId())
+                    .last("LIMIT 1"));
+
+            if (taskRecord == null) {
+                return null;
+            }
+            return toQualityTaskDetailItem(taskRecord);
+        }
+
+        return null;
     }
 
     /**
@@ -414,6 +720,7 @@ public class IssueServiceImpl implements IssueService {
         record.setQcStatus(HemorrhageIssueSupport.resolveQcStatus(record));
 
         Map<String, Object> item = new HashMap<>();
+        item.put("detailType", "hemorrhage");
         item.put("recordId", record.getId());
         item.put("patientName", record.getPatientName());
         item.put("examId", record.getExamId());
@@ -443,6 +750,45 @@ public class IssueServiceImpl implements IssueService {
     }
 
     /**
+     * 将异步质控任务转换为异常详情弹窗的通用明细结构。
+     *
+     * @param taskRecord 异步质控任务记录
+     * @return 详情数据
+     */
+    private Map<String, Object> toQualityTaskDetailItem(QcTaskRecord taskRecord) {
+        Map<String, Object> result = parseRawResult(taskRecord.getResultJson());
+        Map<String, Object> patientInfo = MockQualityAnalysisSupport.extractPatientInfo(result);
+        List<Map<String, Object>> qcItems = MockQualityAnalysisSupport.extractQcItems(result);
+
+        Map<String, Object> item = new HashMap<>();
+        item.put("detailType", "qualityTask");
+        item.put("recordId", taskRecord.getId());
+        item.put("taskId", taskRecord.getTaskId());
+        item.put("taskType", taskRecord.getTaskType());
+        item.put("taskTypeName", firstNonBlank(
+                taskRecord.getTaskTypeName(),
+                MockQualityAnalysisSupport.resolveTaskTypeName(taskRecord.getTaskType())));
+        item.put("sourceMode", taskRecord.getSourceMode());
+        item.put("sourceModeLabel", MockQualityAnalysisSupport.SOURCE_MODE_PACS.equals(taskRecord.getSourceMode())
+                ? "PACS 调取" : "本地上传");
+        item.put("qcStatus", taskRecord.getQcStatus());
+        item.put("qualityScore", taskRecord.getQualityScore());
+        item.put("abnormalCount", taskRecord.getAbnormalCount());
+        item.put("primaryIssue", taskRecord.getPrimaryIssue());
+        item.put("patientInfo", patientInfo);
+        item.put("qcItems", qcItems);
+        item.put("summary", MockQualityAnalysisSupport.extractSummary(result));
+        item.put("device", patientInfo.get("device"));
+        item.put("createdAt", formatDateTime(firstNonNull(
+                taskRecord.getCompletedAt(),
+                taskRecord.getSubmittedAt(),
+                taskRecord.getCreatedAt()), SUMMARY_TIME_FORMATTER));
+        item.put("completedAt", formatDateTime(taskRecord.getCompletedAt(), SUMMARY_TIME_FORMATTER));
+        item.put("errorMessage", taskRecord.getErrorMessage());
+        return item;
+    }
+
+    /**
      * 解析原始检测结果中的 JSON 扩展字段。
      *
      * @param rawResultJson 原始结果 JSON
@@ -454,7 +800,7 @@ public class IssueServiceImpl implements IssueService {
         }
 
         try {
-            return new ObjectMapper().readValue(rawResultJson, Map.class);
+            return objectMapper.readValue(rawResultJson, Map.class);
         } catch (Exception exception) {
             return Map.of();
         }
@@ -464,20 +810,224 @@ public class IssueServiceImpl implements IssueService {
         String patientName = StringUtils.hasText(issueRecord.getPatientName()) ? issueRecord.getPatientName() : "匿名患者";
         String examId = StringUtils.hasText(issueRecord.getExamId()) ? issueRecord.getExamId() : "未知检查号";
         String issueType = StringUtils.hasText(issueRecord.getIssueType()) ? issueRecord.getIssueType() : "异常质控项";
+        String overdueSuffix = isOverdueIssue(issueRecord) ? "，已超过SLA时限" : "";
 
         if ("脑出血".equals(issueType)) {
-            return patientName + "（" + examId + "）检出脑出血，需立即复核";
+            return patientName + "（" + examId + "）检出脑出血，需立即复核" + overdueSuffix;
         }
 
         if (issueType.contains("中线")) {
-            return patientName + "（" + examId + "）存在中线偏移，建议优先复核";
+            return patientName + "（" + examId + "）存在中线偏移，建议优先复核" + overdueSuffix;
         }
 
         if (issueType.contains("脑室")) {
-            return patientName + "（" + examId + "）提示脑室结构异常，请尽快确认";
+            return patientName + "（" + examId + "）提示脑室结构异常，请尽快确认" + overdueSuffix;
         }
 
-        return patientName + "（" + examId + "）存在异常质控项，请及时处理";
+        if (MockQualityAnalysisSupport.isSupportedTaskType(issueRecord.getSourceType())) {
+            return patientName + "（" + examId + "）" + resolveModuleName(issueRecord.getSourceType()) + "存在“" + issueType + "”，请及时复核" + overdueSuffix;
+        }
+
+        return patientName + "（" + examId + "）存在异常质控项，请及时处理" + overdueSuffix;
+    }
+
+    private String buildQualityTaskIssueDescription(QcTaskRecord taskRecord, String issueType) {
+        String taskLabel = resolveModuleName(taskRecord.getTaskType());
+        int abnormalCount = taskRecord.getAbnormalCount() == null ? 0 : taskRecord.getAbnormalCount();
+        String qualityScoreText = taskRecord.getQualityScore() == null
+                ? "--"
+                : String.valueOf(taskRecord.getQualityScore().doubleValue());
+
+        if (abnormalCount > 1) {
+            return taskLabel + "发现 " + abnormalCount + " 项异常，主异常为“" + issueType + "”，当前质控分为 " + qualityScoreText;
+        }
+
+        return taskLabel + "发现异常：“" + issueType + "”，当前质控分为 " + qualityScoreText;
+    }
+
+    private String resolveQualityTaskPriority(QcTaskRecord taskRecord, QcRuleConfig appliedRule) {
+        if (appliedRule != null && StringUtils.hasText(appliedRule.getPriority())) {
+            return appliedRule.getPriority();
+        }
+
+        double qualityScore = taskRecord.getQualityScore() == null ? 0D : taskRecord.getQualityScore().doubleValue();
+        int abnormalCount = taskRecord.getAbnormalCount() == null ? 0 : taskRecord.getAbnormalCount();
+
+        if (MockQualityAnalysisSupport.TASK_TYPE_CORONARY_CTA.equals(taskRecord.getTaskType()) && abnormalCount > 0) {
+            return "高";
+        }
+
+        if (qualityScore > 0D && qualityScore < 70D) {
+            return "高";
+        }
+
+        if (abnormalCount >= 2) {
+            return "高";
+        }
+
+        if (qualityScore > 0D && qualityScore < 85D) {
+            return "中";
+        }
+
+        if (abnormalCount >= 1) {
+            return "中";
+        }
+
+        return "低";
+    }
+
+    private QcRuleConfig resolveAppliedRule(String taskType, String issueType) {
+        return qcRuleConfigService.resolveRule(taskType, issueType);
+    }
+
+    private boolean shouldSkipIssueCreation(QcRuleConfig appliedRule) {
+        return appliedRule != null
+                && (!Boolean.TRUE.equals(appliedRule.getEnabled())
+                || Boolean.FALSE.equals(appliedRule.getAutoCreateIssue()));
+    }
+
+    private String resolveIssuePriority(String issueType, QcRuleConfig appliedRule) {
+        if (appliedRule != null && StringUtils.hasText(appliedRule.getPriority())) {
+            return appliedRule.getPriority();
+        }
+
+        return HemorrhageIssueSupport.resolvePriority(issueType);
+    }
+
+    private String resolveResponsibleRole(QcRuleConfig appliedRule) {
+        if (appliedRule != null && StringUtils.hasText(appliedRule.getResponsibleRole())) {
+            return appliedRule.getResponsibleRole();
+        }
+        return "doctor";
+    }
+
+    private Integer resolveSlaHours(QcRuleConfig appliedRule) {
+        if (appliedRule != null && appliedRule.getSlaHours() != null && appliedRule.getSlaHours() > 0) {
+            return appliedRule.getSlaHours();
+        }
+        return 24;
+    }
+
+    private LocalDateTime calculateDueAt(LocalDateTime createdAt, Integer slaHours) {
+        if (createdAt == null || slaHours == null || slaHours <= 0) {
+            return null;
+        }
+        return createdAt.plusHours(slaHours);
+    }
+
+    private boolean isOverdueIssue(QcIssueRecord issueRecord) {
+        return issueRecord != null
+                && !STATUS_RESOLVED.equals(issueRecord.getStatus())
+                && issueRecord.getDueAt() != null
+                && issueRecord.getDueAt().isBefore(LocalDateTime.now());
+    }
+
+    private String resolveResponsibleRoleLabel(String role) {
+        if ("admin".equals(role)) {
+            return "管理员";
+        }
+        if ("doctor".equals(role)) {
+            return "医生";
+        }
+        return "--";
+    }
+
+    private Long resolveAssigneeUserId(Long assigneeUserId) {
+        if (assigneeUserId == null) {
+            return null;
+        }
+
+        User assignee = userMapper.selectById(assigneeUserId);
+        if (assignee == null || Boolean.FALSE.equals(assignee.getIsActive())) {
+            throw new IllegalArgumentException("指派人员不存在或已停用");
+        }
+        return assignee.getId();
+    }
+
+    private void upsertCapaRecord(Long issueId, Long operatorId, IssueWorkflowUpdateReq request) {
+        if (issueId == null || request == null || !hasCapaContent(request)) {
+            return;
+        }
+
+        QcIssueCapaRecord capaRecord = qcIssueCapaRecordMapper.selectOne(new QueryWrapper<QcIssueCapaRecord>()
+                .eq("issue_id", issueId)
+                .last("LIMIT 1"));
+        if (capaRecord == null) {
+            capaRecord = new QcIssueCapaRecord();
+            capaRecord.setIssueId(issueId);
+        }
+
+        capaRecord.setRootCauseCategory(trimToNull(request.getRootCauseCategory()));
+        capaRecord.setRootCauseDetail(trimToNull(request.getRootCauseDetail()));
+        capaRecord.setCorrectiveAction(trimToNull(request.getCorrectiveAction()));
+        capaRecord.setPreventiveAction(trimToNull(request.getPreventiveAction()));
+        capaRecord.setVerificationNote(trimToNull(request.getVerificationNote()));
+        capaRecord.setUpdatedBy(operatorId);
+
+        if (capaRecord.getId() == null) {
+            qcIssueCapaRecordMapper.insert(capaRecord);
+            return;
+        }
+
+        qcIssueCapaRecordMapper.updateById(capaRecord);
+    }
+
+    private boolean hasCapaContent(IssueWorkflowUpdateReq request) {
+        return request != null
+                && (StringUtils.hasText(request.getRootCauseCategory())
+                || StringUtils.hasText(request.getRootCauseDetail())
+                || StringUtils.hasText(request.getCorrectiveAction())
+                || StringUtils.hasText(request.getPreventiveAction())
+                || StringUtils.hasText(request.getVerificationNote()));
+    }
+
+    private String buildAssignmentRemark(Long beforeAssigneeUserId, Long afterAssigneeUserId) {
+        String beforeName = resolveUserDisplayName(beforeAssigneeUserId);
+        String afterName = resolveUserDisplayName(afterAssigneeUserId);
+        if (beforeAssigneeUserId == null && afterAssigneeUserId != null) {
+            return "指派给 " + afterName;
+        }
+        if (beforeAssigneeUserId != null && afterAssigneeUserId == null) {
+            return "取消指派（原处理人：" + beforeName + "）";
+        }
+        return "处理人由 " + beforeName + " 调整为 " + afterName;
+    }
+
+    private String resolveUserDisplayName(Long userId) {
+        if (userId == null) {
+            return "--";
+        }
+
+        User user = userMapper.selectById(userId);
+        return resolveUserDisplayName(user);
+    }
+
+    private String resolveUserDisplayName(User user) {
+        if (user == null) {
+            return "--";
+        }
+
+        if (StringUtils.hasText(user.getFullName())) {
+            return user.getFullName().trim();
+        }
+
+        return StringUtils.hasText(user.getUsername()) ? user.getUsername().trim() : "--";
+    }
+
+    private String resolveActionTypeLabel(String actionType) {
+        if ("create".equals(actionType)) {
+            return "创建工单";
+        }
+        if ("update_status".equals(actionType)) {
+            return "状态流转";
+        }
+        if ("assign".equals(actionType)) {
+            return "处理人指派";
+        }
+        if ("update_capa".equals(actionType)) {
+            return "更新 CAPA";
+        }
+        return actionType;
     }
 
     private String normalizeImageUrl(String imageUrl) {
@@ -516,6 +1066,10 @@ public class IssueServiceImpl implements IssueService {
             return "头部出血检测";
         }
 
+        if (MockQualityAnalysisSupport.isSupportedTaskType(sourceType)) {
+            return MockQualityAnalysisSupport.resolveTaskTypeName(sourceType);
+        }
+
         return sourceType;
     }
 
@@ -549,6 +1103,13 @@ public class IssueServiceImpl implements IssueService {
 
     private boolean isAbnormalRecord(HemorrhageRecord record) {
         return HemorrhageIssueSupport.isAbnormalRecord(record);
+    }
+
+    private boolean isAbnormalQualityTask(QcTaskRecord taskRecord) {
+        return taskRecord != null
+                && "SUCCESS".equals(taskRecord.getTaskStatus())
+                && ("不合格".equals(taskRecord.getQcStatus())
+                || (taskRecord.getAbnormalCount() != null && taskRecord.getAbnormalCount() > 0));
     }
 
     private boolean isUnresolvedIssue(QcIssueRecord issueRecord) {
@@ -632,12 +1193,65 @@ public class IssueServiceImpl implements IssueService {
         return true;
     }
 
+    private boolean updateIntegerField(Integer currentValue,
+                                       Integer targetValue,
+                                       java.util.function.Consumer<Integer> setter) {
+        if (Objects.equals(currentValue, targetValue)) {
+            return false;
+        }
+
+        setter.accept(targetValue);
+        return true;
+    }
+
+    private boolean updateDateTimeField(LocalDateTime currentValue,
+                                        LocalDateTime targetValue,
+                                        java.util.function.Consumer<LocalDateTime> setter) {
+        if (Objects.equals(currentValue, targetValue)) {
+            return false;
+        }
+
+        setter.accept(targetValue);
+        return true;
+    }
+
     private String formatDateTime(LocalDateTime dateTime, DateTimeFormatter formatter) {
         if (dateTime == null) {
             return "--";
         }
 
         return dateTime.format(formatter);
+    }
+
+    @SafeVarargs
+    private <T> T firstNonNull(T... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (T value : values) {
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+
+        for (String value : values) {
+            if (StringUtils.hasText(value)) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private String trimToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     private double roundOneDecimal(double value) {

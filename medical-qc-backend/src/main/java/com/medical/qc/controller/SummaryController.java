@@ -1,5 +1,6 @@
 package com.medical.qc.controller;
 
+import com.medical.qc.bean.IssueWorkflowUpdateReq;
 import com.medical.qc.entity.User;
 import com.medical.qc.service.IssueService;
 import com.medical.qc.support.SessionUserSupport;
@@ -70,6 +71,18 @@ public class SummaryController {
     }
 
     /**
+     * 获取工单可分派人员列表。
+     *
+     * @param session 当前会话
+     * @return 用户列表
+     */
+    @GetMapping("/operators")
+    public ResponseEntity<?> getAssignableUsers(HttpSession session) {
+        sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.getAssignableUsers());
+    }
+
+    /**
      * 获取异常工单分页列表。
      *
      * @param page 页码
@@ -125,5 +138,25 @@ public class SummaryController {
 
         return ResponseEntity.ok(issueService.updateIssueStatus(
                 sessionUserSupport.resolveScopedUserId(user), user.getId(), issueId, status, remark));
+    }
+
+    /**
+     * 更新异常工单工作流字段，包括指派、CAPA 和状态流转。
+     *
+     * @param issueId 工单 ID
+     * @param requestBody 工作流更新请求
+     * @param session 当前会话
+     * @return 更新后的工单详情
+     */
+    @PatchMapping("/issues/{issueId}/workflow")
+    public ResponseEntity<?> updateIssueWorkflow(@PathVariable("issueId") Long issueId,
+                                                 @RequestBody(required = false) IssueWorkflowUpdateReq requestBody,
+                                                 HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        return ResponseEntity.ok(issueService.updateIssueWorkflow(
+                sessionUserSupport.resolveScopedUserId(user),
+                user.getId(),
+                issueId,
+                requestBody));
     }
 }

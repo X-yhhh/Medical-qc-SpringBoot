@@ -3,6 +3,7 @@ package com.medical.qc.support;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -70,6 +71,137 @@ public final class MockQualityAnalysisSupport {
             return "冠脉CTA质控";
         }
         return taskType;
+    }
+
+    /**
+     * 提取结果中的患者信息对象。
+     *
+     * @param result 质控结果
+     * @return 患者信息映射；缺失时返回空映射
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> extractPatientInfo(Map<String, Object> result) {
+        if (result == null) {
+            return Collections.emptyMap();
+        }
+
+        Object patientInfo = result.get("patientInfo");
+        if (patientInfo instanceof Map<?, ?> patientInfoMap) {
+            return (Map<String, Object>) patientInfoMap;
+        }
+
+        return Collections.emptyMap();
+    }
+
+    /**
+     * 提取结果中的摘要对象。
+     *
+     * @param result 质控结果
+     * @return 摘要映射；缺失时返回空映射
+     */
+    @SuppressWarnings("unchecked")
+    public static Map<String, Object> extractSummary(Map<String, Object> result) {
+        if (result == null) {
+            return Collections.emptyMap();
+        }
+
+        Object summary = result.get("summary");
+        if (summary instanceof Map<?, ?> summaryMap) {
+            return (Map<String, Object>) summaryMap;
+        }
+
+        return Collections.emptyMap();
+    }
+
+    /**
+     * 提取结果中的质控项列表。
+     *
+     * @param result 质控结果
+     * @return 质控项列表；缺失时返回空列表
+     */
+    @SuppressWarnings("unchecked")
+    public static List<Map<String, Object>> extractQcItems(Map<String, Object> result) {
+        if (result == null) {
+            return List.of();
+        }
+
+        Object qcItems = result.get("qcItems");
+        if (qcItems instanceof List<?> qcItemList) {
+            return (List<Map<String, Object>>) qcItemList;
+        }
+
+        return List.of();
+    }
+
+    /**
+     * 从质控结果中解析异常项数量。
+     *
+     * @param result 质控结果
+     * @return 异常项数量
+     */
+    public static int resolveAbnormalCount(Map<String, Object> result) {
+        Object abnormalCount = extractSummary(result).get("abnormalCount");
+        if (abnormalCount instanceof Number number) {
+            return Math.max(number.intValue(), 0);
+        }
+
+        return (int) extractQcItems(result).stream()
+                .filter(item -> "不合格".equals(item.get("status")))
+                .count();
+    }
+
+    /**
+     * 从质控结果中解析质控评分。
+     *
+     * @param result 质控结果
+     * @return 质控评分
+     */
+    public static double resolveQualityScore(Map<String, Object> result) {
+        Object qualityScore = extractSummary(result).get("qualityScore");
+        if (qualityScore instanceof Number number) {
+            return number.doubleValue();
+        }
+
+        int totalItems = extractQcItems(result).size();
+        if (totalItems == 0) {
+            return 0D;
+        }
+
+        return Math.round((totalItems - resolveAbnormalCount(result)) * 1000.0D / totalItems) / 10.0D;
+    }
+
+    /**
+     * 从质控结果中解析质控结论。
+     *
+     * @param result 质控结果
+     * @return 合格/不合格
+     */
+    public static String resolveQcStatus(Map<String, Object> result) {
+        Object qcStatus = extractSummary(result).get("result");
+        if (qcStatus instanceof String qcStatusText && !qcStatusText.isBlank()) {
+            return qcStatusText.trim();
+        }
+
+        return resolveAbnormalCount(result) > 0 ? "不合格" : "合格";
+    }
+
+    /**
+     * 从质控结果中解析主异常项。
+     *
+     * @param result 质控结果
+     * @return 主异常项；若未发现异常则返回“未见明显异常”
+     */
+    public static String resolvePrimaryIssue(Map<String, Object> result) {
+        for (Map<String, Object> item : extractQcItems(result)) {
+            if ("不合格".equals(item.get("status"))) {
+                Object issueName = item.get("name");
+                if (issueName instanceof String issueText && !issueText.isBlank()) {
+                    return issueText.trim();
+                }
+            }
+        }
+
+        return "未见明显异常";
     }
 
     /**

@@ -60,3 +60,24 @@ export const getIssueDetail = (issueId) => {
     method: 'get'
   })
 }
+
+/**
+ * 获取可分派处理人员列表。
+ */
+export const getAssignableUsers = () => {
+  return request({
+    url: '/summary/operators',
+    method: 'get'
+  })
+}
+
+/**
+ * 更新异常工单工作流，包括状态、指派人与 CAPA。
+ */
+export const updateIssueWorkflow = (issueId, data) => {
+  return request({
+    url: `/summary/issues/${issueId}/workflow`,
+    method: 'patch',
+    data,
+  })
+}

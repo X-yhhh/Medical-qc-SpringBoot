@@ -90,6 +90,17 @@ export const getQualityTask = async (taskId) => {
   }
 }
 
+/**
+ * 查询质控任务中心分页列表。
+ */
+export const getQualityTaskPage = async (params = {}) => {
+  try {
+    return await request.get('/quality/tasks', { params })
+  } catch (error) {
+    throw parseRequestError(error, '查询质控任务列表失败')
+  }
+}
+
 // ==================================================================================
 // 真实接口 (Real APIs)
 // ==================================================================================

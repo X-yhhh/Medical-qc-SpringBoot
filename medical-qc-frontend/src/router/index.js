@@ -134,8 +134,18 @@ const routes = [
         meta: { requiresAuth: true, roles: ['doctor', 'admin'] },
       },
       {
+        path: '/quality-tasks',
+        component: () => import('@/views/quality/QualityTaskCenter.vue'),
+        meta: { requiresAuth: true, roles: ['doctor', 'admin'] },
+      },
+      {
         path: '/admin/users',
         component: () => import('@/views/admin/UserManagement.vue'),
+        meta: { requiresAuth: true, roles: ['admin'] },
+      },
+      {
+        path: '/admin/qc-rules',
+        component: () => import('@/views/admin/QcRuleCenter.vue'),
         meta: { requiresAuth: true, roles: ['admin'] },
       },
     ],

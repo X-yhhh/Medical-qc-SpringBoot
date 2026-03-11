@@ -33,7 +33,6 @@ export const useAsyncQualityTaskPage = (options) => {
     submitTask,
     initialPatientInfo,
     pacsPreset,
-    buildStaticPacsResult,
     analysisSteps,
     exportMessage,
     reanalyzeStartMessage,
@@ -180,37 +179,6 @@ export const useAsyncQualityTaskPage = (options) => {
     applyResultPayload(taskDetail?.result || {})
   }
 
-  /**
-   * PACS 演示模式下直接使用前端静态结果，不再请求后端或数据库。
-   *
-   * @param {number} runToken - 当前运行令牌，用于避免旧任务串扰
-   * @param {boolean} showSuccessToast - 是否展示成功提示
-   */
-  const runStaticPacsTask = async (runToken, showSuccessToast) => {
-    addLog('当前质控项的 PACS 调取尚未对接后端，开始使用静态结果回显。')
-    currentAnalysisStep.value = '演示回显'
-    analyzeProgress.value = Math.max(analyzeProgress.value, 35)
-
-    await sleep(1600)
-    if (destroyed || runToken !== activeRunToken) {
-      return false
-    }
-
-    const staticResult = buildStaticPacsResult({
-      patientName: uploadForm.patientName,
-      examId: uploadForm.examId,
-      sourceMode: uploadMode.value,
-    })
-
-    applyResultPayload(staticResult)
-    addLog('静态质控结果已生成，当前未对接后端任务与数据库。')
-
-    if (showSuccessToast) {
-      ElMessage.success(reanalyzeSuccessMessage)
-    }
-    return true
-  }
-
   const pollTaskUntilComplete = async (taskId, runToken) => {
     const startTime = Date.now()
     lastPolledStatus = ''
@@ -269,11 +237,6 @@ export const useAsyncQualityTaskPage = (options) => {
     startVisualProgress(runToken)
 
     try {
-      if (uploadMode.value === 'pacs' && typeof buildStaticPacsResult === 'function') {
-        await runStaticPacsTask(runToken, showSuccessToast)
-        return
-      }
-
       const submitResult = await submitTask({
         file: uploadMode.value === 'local' ? rawFile : null,
         patientName: uploadForm.patientName,
@@ -340,11 +303,7 @@ export const useAsyncQualityTaskPage = (options) => {
     }
 
     if (uploadMode.value === 'pacs') {
-      if (typeof buildStaticPacsResult === 'function') {
-        ElMessage.info(`当前为演示模式，PACS 检查 ${uploadForm.examId} 将直接静态展示结果`)
-      } else {
-        ElMessage.info(`正在通知后端从 PACS 拉取 ID: ${uploadForm.examId} 的数据...`)
-      }
+      ElMessage.info(`正在提交 PACS 检查 ${uploadForm.examId} 的质控任务...`)
     }
 
     uploadDialogVisible.value = false
@@ -354,7 +313,7 @@ export const useAsyncQualityTaskPage = (options) => {
   /**
    * 模拟 PACS 选片入口。
    *
-   * 当前四个 mock 质控页面不走真实 PACS 检索，因此直接使用页面配置的预置患者信息。
+   * 当前仍使用预置患者信息辅助演示选片，但任务会统一提交到后端持久化执行。
    */
   const simulatePacsSelect = () => {
     clearPacsMessageTimer()

@@ -11,6 +11,10 @@ CREATE TABLE IF NOT EXISTS `qc_issue_records` (
   `issue_type` varchar(100) NOT NULL COMMENT '主异常项',
   `description` varchar(255) NOT NULL COMMENT '异常描述',
   `priority` varchar(20) NOT NULL DEFAULT '低' COMMENT '优先级：高/中/低',
+  `assignee_user_id` bigint DEFAULT NULL COMMENT '当前处理人',
+  `responsible_role` varchar(20) DEFAULT NULL COMMENT '责任角色：admin/doctor',
+  `sla_hours` int DEFAULT NULL COMMENT 'SLA时限（小时）',
+  `due_at` datetime DEFAULT NULL COMMENT 'SLA截止时间',
   `status` varchar(20) NOT NULL DEFAULT '待处理' COMMENT '状态：待处理/处理中/已解决',
   `image_url` varchar(500) DEFAULT NULL,
   `last_remark` varchar(500) DEFAULT NULL,
@@ -20,6 +24,9 @@ CREATE TABLE IF NOT EXISTS `qc_issue_records` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_qc_issue_source` (`user_id`, `source_type`, `source_record_id`),
   KEY `idx_qc_issue_user_status_created` (`user_id`, `status`, `created_at`),
+  KEY `idx_qc_issue_user_due_at` (`user_id`, `due_at`),
+  KEY `idx_qc_issue_assignee` (`assignee_user_id`),
+  CONSTRAINT `qc_issue_records_ibfk_2` FOREIGN KEY (`assignee_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `qc_issue_records_ibfk_1` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

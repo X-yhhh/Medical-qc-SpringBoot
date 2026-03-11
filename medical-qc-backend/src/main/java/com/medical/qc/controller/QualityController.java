@@ -244,8 +244,41 @@ public class QualityController {
      */
     @GetMapping("/tasks/{taskId}")
     public ResponseEntity<?> getMockTaskDetail(@PathVariable("taskId") String taskId, HttpSession session) {
-        User user = requireDoctorSession(session);
-        return ResponseEntity.ok(mockQualityTaskService.getTaskDetail(taskId, user.getId()));
+        User user = requireAuthenticatedSession(session);
+        return ResponseEntity.ok(mockQualityTaskService.getTaskDetail(taskId, sessionUserSupport.resolveScopedUserId(user)));
+    }
+
+    /**
+     * 查询质控任务中心分页列表。
+     *
+     * <p>医生仅能查看自己的任务；管理员可查看全局任务。</p>
+     *
+     * @param page 页码
+     * @param limit 每页数量
+     * @param query 搜索关键词
+     * @param taskType 任务类型筛选
+     * @param status 状态筛选
+     * @param sourceMode 来源模式筛选
+     * @param session 当前会话
+     * @return 分页结果
+     */
+    @GetMapping("/tasks")
+    public ResponseEntity<?> getTaskPage(@RequestParam(value = "page", defaultValue = "1") int page,
+                                         @RequestParam(value = "limit", defaultValue = "10") int limit,
+                                         @RequestParam(value = "query", required = false) String query,
+                                         @RequestParam(value = "task_type", required = false) String taskType,
+                                         @RequestParam(value = "status", required = false) String status,
+                                         @RequestParam(value = "source_mode", required = false) String sourceMode,
+                                         HttpSession session) {
+        User user = requireAuthenticatedSession(session);
+        return ResponseEntity.ok(mockQualityTaskService.getTaskPage(
+                sessionUserSupport.resolveScopedUserId(user),
+                page,
+                limit,
+                query,
+                taskType,
+                status,
+                sourceMode));
     }
 
     /**
@@ -258,5 +291,15 @@ public class QualityController {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
         sessionUserSupport.requireDoctor(user);
         return user;
+    }
+
+    /**
+     * 校验当前会话已登录。
+     *
+     * @param session 当前会话
+     * @return 当前登录用户
+     */
+    private User requireAuthenticatedSession(HttpSession session) {
+        return sessionUserSupport.requireAuthenticatedUser(session);
     }
 }

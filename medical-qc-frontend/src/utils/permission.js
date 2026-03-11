@@ -48,6 +48,13 @@ export const ROLE_MENU_CONFIG = [
     roles: ['doctor', 'admin'],
   },
   {
+    type: 'item',
+    index: '/quality-tasks',
+    label: '质控任务中心',
+    icon: 'List',
+    roles: ['doctor', 'admin'],
+  },
+  {
     type: 'group',
     index: 'admin-group',
     label: '系统管理',
@@ -55,6 +62,7 @@ export const ROLE_MENU_CONFIG = [
     roles: ['admin'],
     children: [
       { index: '/admin/users', label: '用户与权限', roles: ['admin'] },
+      { index: '/admin/qc-rules', label: '质控规则中心', roles: ['admin'] },
     ],
   },
 ]

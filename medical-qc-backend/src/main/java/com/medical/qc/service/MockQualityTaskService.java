@@ -18,6 +18,14 @@ public interface MockQualityTaskService {
                                    String sourceMode,
                                    User user) throws IOException;
 
+    Map<String, Object> getTaskPage(Long scopedUserId,
+                                    int page,
+                                    int limit,
+                                    String query,
+                                    String taskType,
+                                    String status,
+                                    String sourceMode);
+
     Map<String, Object> getTaskDetail(String taskId, Long currentUserId);
 
     void processTask(MockQualityTaskMessage message);

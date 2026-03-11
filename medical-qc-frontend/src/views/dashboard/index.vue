@@ -149,7 +149,7 @@
               <template #description>
                 <div class="trend-empty-desc">
                   <div class="trend-empty-title">暂无可视化趋势数据</div>
-                  <div class="trend-empty-text">完成脑出血检测后，这里将展示检查量、异常量、合格率与平均质控分的变化。</div>
+                    <div class="trend-empty-text">完成任一质控任务后，这里将展示平台检查量、异常量、合格率与平均质控分的变化。</div>
                 </div>
               </template>
             </el-empty>
@@ -221,14 +221,13 @@
  * 对接API说明:
  * - statsData / riskList / activities / welcome: 对应后端 /api/v1/dashboard/overview
  * - chartTrend: 对应后端 /api/v1/dashboard/trend
- * - recentVisits: 对应后端 /api/v1/quality/hemorrhage/history 接口（已接入真实数据库）
+ * - recentVisits: 对应后端 /api/v1/dashboard/overview 聚合返回
  */
 
 import { computed, ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import * as echarts from 'echarts'
-import { getHemorrhageHistory } from '@/api/quality'
 import { getDashboardOverview, getDashboardTrend } from '@/api/dashboard'
 import { getStoredUserInfo } from '@/utils/auth'
 
@@ -259,7 +258,7 @@ const quickAccessTitle = computed(() => {
 })
 
 const quickAccessActionText = computed(() => {
-  return isAdminView.value ? '进入用户管理' : '查看工单'
+  return '查看任务中心'
 })
 
 const recentPanelTitle = computed(() => {
@@ -413,9 +412,9 @@ const doctorQuickAccessItems = [
     color: 'linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%)',
   },
   {
-    name: '异常汇总',
-    desc: '问题报告统计',
-    path: '/issues',
+    name: '质控任务中心',
+    desc: '查看任务状态与结果',
+    path: '/quality-tasks',
     icon: 'DataAnalysis',
     color: 'linear-gradient(135deg, #f6d365 0%, #fda085 100%)',
   },
@@ -423,10 +422,10 @@ const doctorQuickAccessItems = [
 
 const adminQuickAccessItems = [
   {
-    name: '用户与权限',
-    desc: '维护账号角色与启停状态',
-    path: '/admin/users',
-    icon: 'UserFilled',
+    name: '质控任务中心',
+    desc: '查看全局任务状态与失败原因',
+    path: '/quality-tasks',
+    icon: 'Tickets',
     color: 'linear-gradient(135deg, #5b8ff9 0%, #69c0ff 100%)',
   },
   {
@@ -465,205 +464,22 @@ const recentVisits = ref([])
 const sideActionButtons = computed(() => {
   if (isAdminView.value) {
     return [
-      { label: '用户管理', path: '/admin/users', icon: 'User', type: 'primary' },
-      { label: '异常工单', path: '/issues', icon: 'Warning', type: 'warning' },
-      { label: '趋势概览', path: '/dashboard', icon: 'TrendCharts', type: 'success' },
+      { label: '任务中心', path: '/quality-tasks', icon: 'Tickets', type: 'primary' },
+      { label: '用户管理', path: '/admin/users', icon: 'User', type: 'warning' },
+      { label: '异常工单', path: '/issues', icon: 'Warning', type: 'success' },
     ]
   }
 
   return [
-    { label: '上传影像', path: '/hemorrhage', icon: 'Upload', type: 'primary' },
-    { label: '新建报告', path: '/head', icon: 'DocumentAdd', type: 'success' },
-    { label: '质控配置', path: '/issues', icon: 'Setting', type: 'warning' },
+    { label: '任务中心', path: '/quality-tasks', icon: 'Tickets', type: 'primary' },
+    { label: '上传影像', path: '/hemorrhage', icon: 'Upload', type: 'success' },
+    { label: '异常工单', path: '/issues', icon: 'Warning', type: 'warning' },
   ]
 })
 
 /**
- * 首页最近访问区域固定展示最近 3 条记录。
- * 保持现有卡片布局不变，仅将数据源替换为后端实时历史记录。
- */
-const RECENT_VISIT_LIMIT = 3
-
-const buildAdminRecentVisits = (activityList = []) => {
-  return activityList.slice(0, RECENT_VISIT_LIMIT).map((activity, index) => ({
-    id: `admin-${index}`,
-    name: '系统质控动态',
-    issue: activity.content,
-    type: activity.type === 'danger' ? 'danger' : activity.type === 'warning' ? 'warning' : 'primary',
-    tag: '系统',
-    time: activity.timestamp || '--',
-    path: '/issues',
-    query: undefined,
-  }))
-}
-
-/**
- * 将后端返回的质控结论映射为 Element Plus 标签类型。
- *
- * @param {string} status - 后端返回的质控状态
- * @returns {string} 标签样式类型
- */
-const getRecentVisitType = (status) => {
-  if (status === '不合格') {
-    return 'danger'
-  }
-
-  if (status === '合格') {
-    return 'success'
-  }
-
-  return 'info'
-}
-
-/**
- * 兼容历史数据：优先使用后端持久化的 qcStatus，若旧数据尚未补齐，则退化为 prediction 映射。
- *
- * @param {Object} record - 单条脑出血检测历史记录
- * @returns {string} 最近访问标签文本
- */
-const getRecentVisitTag = (record) => {
-  if (record?.qcStatus) {
-    return record.qcStatus
-  }
-
-  if (record?.prediction === '出血') {
-    return '不合格'
-  }
-
-  if (record?.prediction === '未出血') {
-    return '合格'
-  }
-
-  return '未知'
-}
-
-/**
- * 拼接最近访问的主标题。
- * 展示效果保持为“患者姓名 (检查号)”的现有样式。
- *
- * @param {Object} record - 单条脑出血检测历史记录
- * @returns {string} 前端展示名称
- */
-const buildRecentVisitName = (record) => {
-  const patientName = record?.patientName || '未命名患者'
-
-  return record?.examId ? `${patientName} (${record.examId})` : patientName
-}
-
-/**
- * 获取首页最近访问展示的主异常项。
- * 优先使用后端按严重度计算后的 primaryIssue；若旧数据尚未补齐，则前端按同规则兜底。
- *
- * @param {Object} record - 单条脑出血检测历史记录
- * @returns {string} 最严重异常项文案
- */
-const buildRecentVisitIssue = (record) => {
-  if (record?.primaryIssue) {
-    return record.primaryIssue
-  }
-
-  if (record?.prediction === '出血') {
-    return '脑出血'
-  }
-
-  if (record?.midlineShift) {
-    return record?.midlineDetail || '中线偏移'
-  }
-
-  if (record?.ventricleIssue) {
-    return record?.ventricleDetail || '脑室结构异常'
-  }
-
-  return '未见明显异常'
-}
-
-/**
- * 将数据库中的创建时间格式化为首页展示文案。
- *
- * @param {string} createdAt - 历史记录创建时间
- * @returns {string} 相对时间文本
- */
-const formatRecentVisitTime = (createdAt) => {
-  const visitTime = dayjs(createdAt)
-
-  if (!visitTime.isValid()) {
-    return '--'
-  }
-
-  const minuteDiff = dayjs().diff(visitTime, 'minute')
-  if (minuteDiff < 1) {
-    return '刚刚'
-  }
-
-  if (minuteDiff < 60) {
-    return `${minuteDiff}分钟前`
-  }
-
-  const hourDiff = dayjs().diff(visitTime, 'hour')
-  if (hourDiff < 24) {
-    return `${hourDiff}小时前`
-  }
-
-  const dayDiff = dayjs().diff(visitTime, 'day')
-  if (dayDiff < 30) {
-    return `${dayDiff}天前`
-  }
-
-  return visitTime.format('MM-DD HH:mm')
-}
-
-/**
- * 加载首页“最近访问”数据。
- * 数据直接来自脑出血检测历史表，保证页面展示与数据库实时同步。
- */
-const loadRecentVisits = async () => {
-  if (isAdminView.value) {
-    recentVisits.value = buildAdminRecentVisits(activities.value)
-    return
-  }
-
-  const response = await getHemorrhageHistory(RECENT_VISIT_LIMIT)
-  const historyList = Array.isArray(response?.data) ? response.data : []
-
-  recentVisits.value = historyList.map((record) => {
-    const tag = getRecentVisitTag(record)
-
-    return {
-      id: record.id,
-      name: buildRecentVisitName(record),
-      issue: buildRecentVisitIssue(record),
-      type: getRecentVisitType(tag),
-      tag,
-      imageUrl: normalizeImageUrl(record.patientImagePath || record.imagePath),
-      time: formatRecentVisitTime(record.createdAt),
-      path: '/hemorrhage',
-      query: { recordId: record.id },
-    }
-  })
-}
-
-/**
- * 规范化图片路径，便于首页最近访问直接预览患者影像。
- *
- * @param {string} rawUrl - 原始图片路径
- * @returns {string} 可访问的图片地址
- */
-const normalizeImageUrl = (rawUrl) => {
-  if (!rawUrl) {
-    return ''
-  }
-
-  const normalizedUrl = String(rawUrl).trim().replaceAll('\\', '/')
-  if (normalizedUrl.startsWith('http://') || normalizedUrl.startsWith('https://') || normalizedUrl.startsWith('data:')) {
-    return normalizedUrl
-  }
-
-  return normalizedUrl.startsWith('/') ? normalizedUrl : `/${normalizedUrl}`
-}
-
-/**
  * 加载首页总览数据。
- * 该数据由后端基于脑出血检测历史记录实时聚合。
+ * 该数据由后端统一聚合脑出血检测与异步质控任务。
  */
 const loadDashboardOverview = async () => {
   const response = await getDashboardOverview()
@@ -673,10 +489,7 @@ const loadDashboardOverview = async () => {
   riskList.value = Array.isArray(response?.riskList) ? response.riskList : []
   highRiskCount.value = response?.highRiskCount || 0
   activities.value = Array.isArray(response?.activities) ? response.activities : []
-
-  if (isAdminView.value) {
-    recentVisits.value = buildAdminRecentVisits(activities.value)
-  }
+  recentVisits.value = Array.isArray(response?.recentVisits) ? response.recentVisits : []
 }
 
 const handleRecentVisitClick = (item) => {
@@ -684,7 +497,7 @@ const handleRecentVisitClick = (item) => {
 }
 
 const handleQuickAccessHeaderClick = () => {
-  router.push(isAdminView.value ? '/admin/users' : '/issues')
+  router.push('/quality-tasks')
 }
 
 /**
@@ -838,11 +651,6 @@ const handleResize = () => {
  */
 onMounted(async () => {
   const pendingTasks = [loadDashboardOverview(), loadDashboardTrend()]
-
-  if (!isAdminView.value) {
-    pendingTasks.push(loadRecentVisits())
-  }
-
   await Promise.allSettled(pendingTasks)
   window.addEventListener('resize', handleResize)
 })

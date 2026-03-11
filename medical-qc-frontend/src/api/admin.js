@@ -35,3 +35,36 @@ export const updateAdminUser = (userId, data) => {
     data,
   })
 }
+
+/**
+ * 获取质控规则分页列表。
+ */
+export const getAdminQcRules = (params) => {
+  return request({
+    url: '/admin/qc-rules',
+    method: 'get',
+    params,
+  })
+}
+
+/**
+ * 新增质控规则。
+ */
+export const createAdminQcRule = (data) => {
+  return request({
+    url: '/admin/qc-rules',
+    method: 'post',
+    data,
+  })
+}
+
+/**
+ * 更新质控规则。
+ */
+export const updateAdminQcRule = (ruleId, data) => {
+  return request({
+    url: `/admin/qc-rules/${ruleId}`,
+    method: 'put',
+    data,
+  })
+}

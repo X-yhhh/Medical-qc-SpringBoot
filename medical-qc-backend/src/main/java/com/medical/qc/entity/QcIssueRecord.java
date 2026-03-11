@@ -27,6 +27,10 @@ public class QcIssueRecord implements Serializable {
     private String issueType;
     private String description;
     private String priority;
+    private Long assigneeUserId;
+    private String responsibleRole;
+    private Integer slaHours;
+    private LocalDateTime dueAt;
     private String status;
     private String imageUrl;
     private String lastRemark;
@@ -104,6 +108,38 @@ public class QcIssueRecord implements Serializable {
 
     public void setPriority(String priority) {
         this.priority = priority;
+    }
+
+    public Long getAssigneeUserId() {
+        return assigneeUserId;
+    }
+
+    public void setAssigneeUserId(Long assigneeUserId) {
+        this.assigneeUserId = assigneeUserId;
+    }
+
+    public String getResponsibleRole() {
+        return responsibleRole;
+    }
+
+    public void setResponsibleRole(String responsibleRole) {
+        this.responsibleRole = responsibleRole;
+    }
+
+    public Integer getSlaHours() {
+        return slaHours;
+    }
+
+    public void setSlaHours(Integer slaHours) {
+        this.slaHours = slaHours;
+    }
+
+    public LocalDateTime getDueAt() {
+        return dueAt;
+    }
+
+    public void setDueAt(LocalDateTime dueAt) {
+        this.dueAt = dueAt;
     }
 
     public String getStatus() {

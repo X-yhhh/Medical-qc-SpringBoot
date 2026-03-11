@@ -1,15 +1,21 @@
 package com.medical.qc.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.medical.qc.common.AuthRole;
 import com.medical.qc.entity.HemorrhageRecord;
+import com.medical.qc.entity.QcTaskRecord;
 import com.medical.qc.entity.User;
+import com.medical.qc.mapper.QcTaskRecordMapper;
 import com.medical.qc.service.DashboardService;
 import com.medical.qc.service.IssueService;
 import com.medical.qc.service.QualityService;
 import com.medical.qc.support.HemorrhageIssueSupport;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.medical.qc.support.MockQualityAnalysisSupport;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -19,57 +25,81 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * 首页仪表盘服务实现。
- * 当前基于脑出血检测历史记录生成首页所需的真实数据，
- * 后续其他质控项接入后可在此处继续扩展聚合逻辑。
+ *
+ * <p>当前统一聚合脑出血检测记录与四个异步质控模块的任务数据，
+ * 使首页能反映整个平台的运行态势，而非单一模块。</p>
  */
 @Service
 public class DashboardServiceImpl implements DashboardService {
     private static final DateTimeFormatter ACTIVITY_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
-    private static final DateTimeFormatter RISK_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
+    private static final DateTimeFormatter RECENT_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
+    private static final DateTimeFormatter TREND_DATE_FORMATTER = DateTimeFormatter.ofPattern("MM-dd");
 
-    @Autowired
-    private QualityService qualityService;
+    private final QualityService qualityService;
+    private final IssueService issueService;
+    private final QcTaskRecordMapper qcTaskRecordMapper;
 
-    @Autowired
-    private IssueService issueService;
+    public DashboardServiceImpl(QualityService qualityService,
+                                IssueService issueService,
+                                QcTaskRecordMapper qcTaskRecordMapper) {
+        this.qualityService = qualityService;
+        this.issueService = issueService;
+        this.qcTaskRecordMapper = qcTaskRecordMapper;
+    }
 
     @Override
     public Map<String, Object> getOverview(User user) {
         Long scopedUserId = resolveScopedUserId(user);
-        List<HemorrhageRecord> history = qualityService.getHistory(scopedUserId);
+        List<HemorrhageRecord> hemorrhageHistory = qualityService.getHistory(scopedUserId);
+        List<QcTaskRecord> qualityTasks = listQualityTasks(scopedUserId);
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
 
-        long todayTotal = countByDate(history, today, record -> true);
-        long yesterdayTotal = countByDate(history, yesterday, record -> true);
-        long todayQualified = countByDate(history, today, this::isQualifiedRecord);
-        long yesterdayQualified = countByDate(history, yesterday, this::isQualifiedRecord);
-        long todayAbnormal = countByDate(history, today, this::isAbnormalRecord);
-        long yesterdayAbnormal = countByDate(history, yesterday, this::isAbnormalRecord);
-        double todayAverageScore = calculateAverageScore(history, today);
-        double yesterdayAverageScore = calculateAverageScore(history, yesterday);
+        long todayTotal = countHemorrhageByDate(hemorrhageHistory, today, record -> true)
+                + countTaskByDate(qualityTasks, today, this::isSuccessfulQualityTask);
+        long yesterdayTotal = countHemorrhageByDate(hemorrhageHistory, yesterday, record -> true)
+                + countTaskByDate(qualityTasks, yesterday, this::isSuccessfulQualityTask);
+        long todayQualified = countHemorrhageByDate(hemorrhageHistory, today, this::isQualifiedHemorrhageRecord)
+                + countTaskByDate(qualityTasks, today, this::isQualifiedQualityTask);
+        long yesterdayQualified = countHemorrhageByDate(hemorrhageHistory, yesterday, this::isQualifiedHemorrhageRecord)
+                + countTaskByDate(qualityTasks, yesterday, this::isQualifiedQualityTask);
+        long todayAbnormal = countHemorrhageByDate(hemorrhageHistory, today, this::isAbnormalHemorrhageRecord)
+                + countTaskByDate(qualityTasks, today, this::isAbnormalQualityTask);
+        long yesterdayAbnormal = countHemorrhageByDate(hemorrhageHistory, yesterday, this::isAbnormalHemorrhageRecord)
+                + countTaskByDate(qualityTasks, yesterday, this::isAbnormalQualityTask);
+        double todayAverageScore = calculateAverageScore(hemorrhageHistory, qualityTasks, today);
+        double yesterdayAverageScore = calculateAverageScore(hemorrhageHistory, qualityTasks, yesterday);
 
         Map<String, Object> response = new HashMap<>();
         response.put("welcomeName", resolveDisplayName(user));
         response.put("viewMode", resolveViewMode(user));
         response.put("pendingTaskCount", issueService.countPendingIssues(scopedUserId));
-        response.put("stats", buildStats(todayTotal, yesterdayTotal, todayQualified, yesterdayQualified,
-                todayAbnormal, yesterdayAbnormal, todayAverageScore, yesterdayAverageScore));
-
+        response.put("stats", buildStats(
+                todayTotal,
+                yesterdayTotal,
+                todayQualified,
+                yesterdayQualified,
+                todayAbnormal,
+                yesterdayAbnormal,
+                todayAverageScore,
+                yesterdayAverageScore));
         response.put("riskList", issueService.getRiskAlerts(scopedUserId, 5));
         response.put("highRiskCount", issueService.countHighRiskIssues(scopedUserId));
-        response.put("activities", buildActivities(history));
+        response.put("activities", buildActivities(hemorrhageHistory, qualityTasks));
+        response.put("recentVisits", buildRecentVisits(hemorrhageHistory, qualityTasks));
         return response;
     }
 
     @Override
     public Map<String, Object> getTrend(User user, String period) {
         int days = "month".equalsIgnoreCase(period) ? 30 : 7;
-        List<HemorrhageRecord> history = qualityService.getHistory(resolveScopedUserId(user));
+        Long scopedUserId = resolveScopedUserId(user);
+        List<HemorrhageRecord> hemorrhageHistory = qualityService.getHistory(scopedUserId);
+        List<QcTaskRecord> qualityTasks = listQualityTasks(scopedUserId);
         LocalDate startDate = LocalDate.now().minusDays(days - 1L);
 
         List<String> dates = new ArrayList<>();
@@ -89,13 +119,16 @@ public class DashboardServiceImpl implements DashboardService {
 
         for (int i = 0; i < days; i++) {
             LocalDate currentDate = startDate.plusDays(i);
-            long totalCount = countByDate(history, currentDate, record -> true);
-            long qualifiedCount = countByDate(history, currentDate, this::isQualifiedRecord);
-            long abnormalCount = countByDate(history, currentDate, this::isAbnormalRecord);
-            double averageScore = calculateAverageScore(history, currentDate);
+            long totalCount = countHemorrhageByDate(hemorrhageHistory, currentDate, record -> true)
+                    + countTaskByDate(qualityTasks, currentDate, this::isSuccessfulQualityTask);
+            long qualifiedCount = countHemorrhageByDate(hemorrhageHistory, currentDate, this::isQualifiedHemorrhageRecord)
+                    + countTaskByDate(qualityTasks, currentDate, this::isQualifiedQualityTask);
+            long abnormalCount = countHemorrhageByDate(hemorrhageHistory, currentDate, this::isAbnormalHemorrhageRecord)
+                    + countTaskByDate(qualityTasks, currentDate, this::isAbnormalQualityTask);
+            double averageScore = calculateAverageScore(hemorrhageHistory, qualityTasks, currentDate);
             double passRate = totalCount == 0 ? 0D : roundOneDecimal(qualifiedCount * 100.0D / totalCount);
 
-            dates.add(currentDate.format(DateTimeFormatter.ofPattern("MM-dd")));
+            dates.add(currentDate.format(TREND_DATE_FORMATTER));
             passRates.add(passRate);
             totalCounts.add(totalCount);
             abnormalCounts.add(abnormalCount);
@@ -111,12 +144,12 @@ public class DashboardServiceImpl implements DashboardService {
 
             if (abnormalCount > abnormalPeak) {
                 abnormalPeak = abnormalCount;
-                abnormalPeakDate = currentDate.format(DateTimeFormatter.ofPattern("MM-dd"));
+                abnormalPeakDate = currentDate.format(TREND_DATE_FORMATTER);
             }
 
             if (totalCount > 0 && passRate > bestPassRate) {
                 bestPassRate = passRate;
-                bestPassRateDate = currentDate.format(DateTimeFormatter.ofPattern("MM-dd"));
+                bestPassRateDate = currentDate.format(TREND_DATE_FORMATTER);
             }
         }
 
@@ -140,6 +173,18 @@ public class DashboardServiceImpl implements DashboardService {
         return response;
     }
 
+    /**
+     * 查询当前权限范围内的异步质控任务记录。
+     */
+    private List<QcTaskRecord> listQualityTasks(Long scopedUserId) {
+        QueryWrapper<QcTaskRecord> queryWrapper = new QueryWrapper<QcTaskRecord>()
+                .orderByDesc("submitted_at");
+        if (scopedUserId != null) {
+            queryWrapper.eq("user_id", scopedUserId);
+        }
+        return qcTaskRecordMapper.selectList(queryWrapper);
+    }
+
     private List<Map<String, Object>> buildStats(long todayTotal,
                                                  long yesterdayTotal,
                                                  long todayQualified,
@@ -149,11 +194,11 @@ public class DashboardServiceImpl implements DashboardService {
                                                  double todayAverageScore,
                                                  double yesterdayAverageScore) {
         List<Map<String, Object>> stats = new ArrayList<>();
-        stats.add(buildStatItem("今日检查总量", todayTotal, "例", "DataLine",
+        stats.add(buildStatItem("今日完成质控", todayTotal, "例", "DataLine",
                 calculateTrend(todayTotal, yesterdayTotal), "primary"));
-        stats.add(buildStatItem("AI 自动审核", todayQualified, "例", "Cpu",
+        stats.add(buildStatItem("自动通过数", todayQualified, "例", "Cpu",
                 calculateTrend(todayQualified, yesterdayQualified), "success"));
-        stats.add(buildStatItem("人工复核数", todayAbnormal, "例", "Edit",
+        stats.add(buildStatItem("异常待复核", todayAbnormal, "例", "Warning",
                 calculateTrend(todayAbnormal, yesterdayAbnormal), "warning"));
         stats.add(buildStatItem("平均质控分", roundOneDecimal(todayAverageScore), "分", "Trophy",
                 calculateTrend(todayAverageScore, yesterdayAverageScore), "info"));
@@ -176,59 +221,214 @@ public class DashboardServiceImpl implements DashboardService {
         return item;
     }
 
-    private List<Map<String, Object>> buildRiskList(List<HemorrhageRecord> history) {
-        return history.stream()
-                .filter(this::isAbnormalRecord)
-                .sorted(Comparator
-                        .comparingInt(this::resolveSeverityLevel).reversed()
-                        .thenComparing(HemorrhageRecord::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
-                .limit(3)
-                .map(record -> {
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("content", buildRiskContent(record));
-                    item.put("time", formatDateTime(record.getCreatedAt(), RISK_TIME_FORMATTER));
-                    item.put("targetRoute", "/issues");
-                    return item;
-                })
-                .toList();
-    }
+    /**
+     * 构建首页活动时间轴，统一展示成功与失败的质控事件。
+     */
+    private List<Map<String, Object>> buildActivities(List<HemorrhageRecord> hemorrhageHistory,
+                                                      List<QcTaskRecord> qualityTasks) {
+        List<DashboardEvent> dashboardEvents = new ArrayList<>();
+        hemorrhageHistory.forEach(record -> dashboardEvents.add(toHemorrhageEvent(record)));
+        qualityTasks.forEach(taskRecord -> {
+            DashboardEvent taskEvent = toTaskEvent(taskRecord);
+            if (taskEvent != null) {
+                dashboardEvents.add(taskEvent);
+            }
+        });
 
-    private List<Map<String, Object>> buildActivities(List<HemorrhageRecord> history) {
-        return history.stream()
-                .sorted(Comparator.comparing(HemorrhageRecord::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+        return dashboardEvents.stream()
+                .filter(event -> event.occurredAt() != null)
+                .sorted(Comparator.comparing(DashboardEvent::occurredAt).reversed())
                 .limit(5)
-                .map(record -> {
-                    Map<String, Object> item = new HashMap<>();
-                    item.put("content", buildActivityContent(record));
-                    item.put("timestamp", formatDateTime(record.getCreatedAt(), ACTIVITY_TIME_FORMATTER));
-                    item.put("type", resolveActivityType(record));
-                    item.put("color", resolveActivityColor(record));
-                    return item;
-                })
+                .map(this::toActivityItem)
                 .toList();
     }
 
-    private long countByDate(List<HemorrhageRecord> history, LocalDate targetDate,
-                             java.util.function.Predicate<HemorrhageRecord> predicate) {
-        return history.stream()
+    /**
+     * 构建首页最近访问区域。
+     */
+    private List<Map<String, Object>> buildRecentVisits(List<HemorrhageRecord> hemorrhageHistory,
+                                                        List<QcTaskRecord> qualityTasks) {
+        List<DashboardVisit> dashboardVisits = new ArrayList<>();
+        hemorrhageHistory.forEach(record -> dashboardVisits.add(toHemorrhageVisit(record)));
+        qualityTasks.forEach(taskRecord -> {
+            DashboardVisit visit = toTaskVisit(taskRecord);
+            if (visit != null) {
+                dashboardVisits.add(visit);
+            }
+        });
+
+        return dashboardVisits.stream()
+                .filter(visit -> visit.occurredAt() != null)
+                .sorted(Comparator.comparing(DashboardVisit::occurredAt).reversed())
+                .limit(3)
+                .map(this::toVisitItem)
+                .toList();
+    }
+
+    private DashboardEvent toHemorrhageEvent(HemorrhageRecord record) {
+        LocalDateTime occurredAt = record == null ? null : record.getCreatedAt();
+        String patientName = normalizePatientName(record == null ? null : record.getPatientName());
+        String primaryIssue = record == null ? "未见明显异常" : normalizePrimaryIssue(record.getPrimaryIssue());
+
+        String content = patientName + " 完成头部出血检测：" + primaryIssue;
+        return new DashboardEvent(
+                occurredAt,
+                content,
+                resolveHemorrhageEventType(record),
+                resolveHemorrhageEventColor(record));
+    }
+
+    private DashboardEvent toTaskEvent(QcTaskRecord taskRecord) {
+        if (taskRecord == null) {
+            return null;
+        }
+
+        LocalDateTime occurredAt = resolveTaskOccurredAt(taskRecord);
+        if (occurredAt == null) {
+            return null;
+        }
+
+        String patientName = normalizePatientName(taskRecord.getPatientName());
+        String taskLabel = resolveTaskLabel(taskRecord);
+
+        if (isFailedQualityTask(taskRecord)) {
+            return new DashboardEvent(
+                    occurredAt,
+                    patientName + " 的" + taskLabel + "执行失败：" + normalizeFailureReason(taskRecord.getErrorMessage()),
+                    "danger",
+                    "#F56C6C");
+        }
+
+        if (!isSuccessfulQualityTask(taskRecord)) {
+            return null;
+        }
+
+        String primaryIssue = normalizePrimaryIssue(taskRecord.getPrimaryIssue());
+        String content = patientName + " 完成" + taskLabel + "：" + primaryIssue;
+        return new DashboardEvent(
+                occurredAt,
+                content,
+                resolveTaskEventType(taskRecord),
+                resolveTaskEventColor(taskRecord));
+    }
+
+    private Map<String, Object> toActivityItem(DashboardEvent event) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("content", event.content());
+        item.put("timestamp", formatDateTime(event.occurredAt(), ACTIVITY_TIME_FORMATTER));
+        item.put("type", event.type());
+        item.put("color", event.color());
+        return item;
+    }
+
+    private DashboardVisit toHemorrhageVisit(HemorrhageRecord record) {
+        String tag = isQualifiedHemorrhageRecord(record) ? "合格" : "不合格";
+        return new DashboardVisit(
+                record == null ? null : record.getCreatedAt(),
+                "hemorrhage-" + (record == null ? "unknown" : record.getId()),
+                buildVisitName(record == null ? null : record.getPatientName(), record == null ? null : record.getExamId()),
+                normalizePrimaryIssue(record == null ? null : record.getPrimaryIssue()),
+                resolveVisitType(tag),
+                tag,
+                normalizeImageUrl(record == null ? null : record.getPatientImagePath()),
+                "/hemorrhage",
+                record == null || record.getId() == null ? null : Map.of("recordId", record.getId()));
+    }
+
+    private DashboardVisit toTaskVisit(QcTaskRecord taskRecord) {
+        if (taskRecord == null) {
+            return null;
+        }
+
+        LocalDateTime occurredAt = resolveTaskOccurredAt(taskRecord);
+        if (occurredAt == null) {
+            return null;
+        }
+
+        String tag;
+        String issue;
+        if (isFailedQualityTask(taskRecord)) {
+            tag = "失败";
+            issue = normalizeFailureReason(taskRecord.getErrorMessage());
+        } else if (isSuccessfulQualityTask(taskRecord)) {
+            tag = StringUtils.hasText(taskRecord.getQcStatus()) ? taskRecord.getQcStatus() : "已完成";
+            issue = normalizePrimaryIssue(taskRecord.getPrimaryIssue());
+        } else {
+            return null;
+        }
+
+        return new DashboardVisit(
+                occurredAt,
+                "task-" + taskRecord.getTaskId(),
+                buildVisitName(taskRecord.getPatientName(), taskRecord.getExamId()),
+                issue,
+                resolveVisitType(tag),
+                tag,
+                resolveTaskImageUrl(taskRecord.getStoredFilePath()),
+                "/quality-tasks",
+                StringUtils.hasText(taskRecord.getTaskId()) ? Map.of("taskId", taskRecord.getTaskId()) : null);
+    }
+
+    private Map<String, Object> toVisitItem(DashboardVisit visit) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", visit.id());
+        item.put("name", visit.name());
+        item.put("issue", visit.issue());
+        item.put("type", visit.type());
+        item.put("tag", visit.tag());
+        item.put("imageUrl", visit.imageUrl());
+        item.put("time", formatRelativeTime(visit.occurredAt()));
+        item.put("path", visit.path());
+        item.put("query", visit.query());
+        return item;
+    }
+
+    private long countHemorrhageByDate(List<HemorrhageRecord> hemorrhageHistory,
+                                       LocalDate targetDate,
+                                       Predicate<HemorrhageRecord> predicate) {
+        return hemorrhageHistory.stream()
                 .filter(record -> record.getCreatedAt() != null)
                 .filter(record -> targetDate.equals(record.getCreatedAt().toLocalDate()))
                 .filter(predicate)
                 .count();
     }
 
-    private double calculateAverageScore(List<HemorrhageRecord> history, LocalDate targetDate) {
-        return roundOneDecimal(history.stream()
-                .filter(record -> record.getCreatedAt() != null)
-                .filter(record -> targetDate.equals(record.getCreatedAt().toLocalDate()))
-                .mapToDouble(this::calculateQualityScore)
-                .average()
-                .orElse(0D));
+    private long countTaskByDate(List<QcTaskRecord> qualityTasks,
+                                 LocalDate targetDate,
+                                 Predicate<QcTaskRecord> predicate) {
+        return qualityTasks.stream()
+                .filter(predicate)
+                .filter(taskRecord -> resolveTaskOccurredAt(taskRecord) != null)
+                .filter(taskRecord -> targetDate.equals(resolveTaskOccurredAt(taskRecord).toLocalDate()))
+                .count();
     }
 
-    private double calculateQualityScore(HemorrhageRecord record) {
-        String primaryIssue = record.getPrimaryIssue();
-        if (!isAbnormalRecord(record)) {
+    private double calculateAverageScore(List<HemorrhageRecord> hemorrhageHistory,
+                                         List<QcTaskRecord> qualityTasks,
+                                         LocalDate targetDate) {
+        List<Double> scores = new ArrayList<>();
+
+        hemorrhageHistory.stream()
+                .filter(record -> record.getCreatedAt() != null)
+                .filter(record -> targetDate.equals(record.getCreatedAt().toLocalDate()))
+                .mapToDouble(this::calculateHemorrhageScore)
+                .forEach(scores::add);
+
+        qualityTasks.stream()
+                .filter(this::isSuccessfulQualityTask)
+                .filter(taskRecord -> resolveTaskOccurredAt(taskRecord) != null)
+                .filter(taskRecord -> targetDate.equals(resolveTaskOccurredAt(taskRecord).toLocalDate()))
+                .map(QcTaskRecord::getQualityScore)
+                .filter(value -> value != null)
+                .map(BigDecimal::doubleValue)
+                .forEach(scores::add);
+
+        return roundOneDecimal(scores.stream().mapToDouble(Double::doubleValue).average().orElse(0D));
+    }
+
+    private double calculateHemorrhageScore(HemorrhageRecord record) {
+        String primaryIssue = normalizePrimaryIssue(record == null ? null : record.getPrimaryIssue());
+        if (!isAbnormalHemorrhageRecord(record)) {
             return 98D;
         }
 
@@ -236,11 +436,11 @@ public class DashboardServiceImpl implements DashboardService {
             return 65D;
         }
 
-        if (primaryIssue != null && primaryIssue.contains("中线")) {
+        if (primaryIssue.contains("中线")) {
             return 78D;
         }
 
-        if (primaryIssue != null && primaryIssue.contains("脑室")) {
+        if (primaryIssue.contains("脑室")) {
             return 85D;
         }
 
@@ -255,12 +455,32 @@ public class DashboardServiceImpl implements DashboardService {
         return roundOneDecimal((currentValue - previousValue) * 100.0D / previousValue);
     }
 
-    private boolean isAbnormalRecord(HemorrhageRecord record) {
+    private boolean isAbnormalHemorrhageRecord(HemorrhageRecord record) {
         return HemorrhageIssueSupport.isAbnormalRecord(record);
     }
 
-    private boolean isQualifiedRecord(HemorrhageRecord record) {
+    private boolean isQualifiedHemorrhageRecord(HemorrhageRecord record) {
         return HemorrhageIssueSupport.isQualifiedRecord(record);
+    }
+
+    private boolean isSuccessfulQualityTask(QcTaskRecord taskRecord) {
+        return taskRecord != null && "SUCCESS".equals(taskRecord.getTaskStatus());
+    }
+
+    private boolean isFailedQualityTask(QcTaskRecord taskRecord) {
+        return taskRecord != null && "FAILED".equals(taskRecord.getTaskStatus());
+    }
+
+    private boolean isQualifiedQualityTask(QcTaskRecord taskRecord) {
+        return isSuccessfulQualityTask(taskRecord)
+                && "合格".equals(taskRecord.getQcStatus())
+                && (taskRecord.getAbnormalCount() == null || taskRecord.getAbnormalCount() == 0);
+    }
+
+    private boolean isAbnormalQualityTask(QcTaskRecord taskRecord) {
+        return isSuccessfulQualityTask(taskRecord)
+                && ("不合格".equals(taskRecord.getQcStatus())
+                || (taskRecord.getAbnormalCount() != null && taskRecord.getAbnormalCount() > 0));
     }
 
     private String resolveDisplayName(User user) {
@@ -279,75 +499,152 @@ public class DashboardServiceImpl implements DashboardService {
         return AuthRole.ADMIN.matchesRoleId(user.getRoleId()) ? null : user.getId();
     }
 
-    private int resolveSeverityLevel(HemorrhageRecord record) {
-        String primaryIssue = record.getPrimaryIssue();
-        if ("脑出血".equals(primaryIssue)) {
-            return 3;
+    private String resolveHemorrhageEventType(HemorrhageRecord record) {
+        if (!isAbnormalHemorrhageRecord(record)) {
+            return "success";
         }
 
-        if (primaryIssue != null && primaryIssue.contains("中线")) {
-            return 2;
-        }
-
-        if (primaryIssue != null && primaryIssue.contains("脑室")) {
-            return 1;
-        }
-
-        return 0;
-    }
-
-    private String buildRiskContent(HemorrhageRecord record) {
-        String patientName = record.getPatientName() == null || record.getPatientName().isBlank()
-                ? "匿名患者" : record.getPatientName();
-        String examId = record.getExamId() == null || record.getExamId().isBlank() ? "未知检查号" : record.getExamId();
-        String primaryIssue = record.getPrimaryIssue() == null ? "未见明显异常" : record.getPrimaryIssue();
-
-        if ("脑出血".equals(primaryIssue)) {
-            return patientName + "（" + examId + "）检出脑出血，需立即复核";
-        }
-
-        if (primaryIssue.contains("中线")) {
-            return patientName + "（" + examId + "）存在中线偏移，建议优先复核";
-        }
-
-        if (primaryIssue.contains("脑室")) {
-            return patientName + "（" + examId + "）提示脑室结构异常，请尽快确认";
-        }
-
-        return patientName + "（" + examId + "）存在异常质控项，请及时处理";
-    }
-
-    private String buildActivityContent(HemorrhageRecord record) {
-        String patientName = record.getPatientName() == null || record.getPatientName().isBlank()
-                ? "匿名患者" : record.getPatientName();
-        String primaryIssue = record.getPrimaryIssue() == null ? "未见明显异常" : record.getPrimaryIssue();
-        return patientName + " 完成头部出血检测：" + primaryIssue;
-    }
-
-    private String resolveActivityType(HemorrhageRecord record) {
-        int severityLevel = resolveSeverityLevel(record);
-        if (severityLevel >= 3) {
+        if ("脑出血".equals(normalizePrimaryIssue(record.getPrimaryIssue()))) {
             return "danger";
         }
 
-        if (severityLevel >= 1) {
-            return "warning";
+        return "warning";
+    }
+
+    private String resolveHemorrhageEventColor(HemorrhageRecord record) {
+        if (!isAbnormalHemorrhageRecord(record)) {
+            return "#67C23A";
+        }
+
+        if ("脑出血".equals(normalizePrimaryIssue(record.getPrimaryIssue()))) {
+            return "#F56C6C";
+        }
+
+        return "#E6A23C";
+    }
+
+    private String resolveTaskEventType(QcTaskRecord taskRecord) {
+        if (isAbnormalQualityTask(taskRecord)) {
+            return "danger";
         }
 
         return "success";
     }
 
-    private String resolveActivityColor(HemorrhageRecord record) {
-        int severityLevel = resolveSeverityLevel(record);
-        if (severityLevel >= 3) {
-            return "#F56C6C";
+    private String resolveTaskEventColor(QcTaskRecord taskRecord) {
+        return isAbnormalQualityTask(taskRecord) ? "#F56C6C" : "#67C23A";
+    }
+
+    private String resolveVisitType(String tag) {
+        if ("不合格".equals(tag) || "失败".equals(tag)) {
+            return "danger";
         }
 
-        if (severityLevel >= 1) {
-            return "#E6A23C";
+        if ("合格".equals(tag)) {
+            return "success";
         }
 
-        return "#67C23A";
+        return "info";
+    }
+
+    private String resolveTaskLabel(QcTaskRecord taskRecord) {
+        if (StringUtils.hasText(taskRecord.getTaskTypeName())) {
+            return taskRecord.getTaskTypeName().trim();
+        }
+
+        return MockQualityAnalysisSupport.resolveTaskTypeName(taskRecord.getTaskType());
+    }
+
+    private LocalDateTime resolveTaskOccurredAt(QcTaskRecord taskRecord) {
+        if (taskRecord == null) {
+            return null;
+        }
+
+        if (taskRecord.getCompletedAt() != null) {
+            return taskRecord.getCompletedAt();
+        }
+
+        if (taskRecord.getSubmittedAt() != null) {
+            return taskRecord.getSubmittedAt();
+        }
+
+        return taskRecord.getCreatedAt();
+    }
+
+    private String normalizePatientName(String patientName) {
+        return StringUtils.hasText(patientName) ? patientName.trim() : "匿名患者";
+    }
+
+    private String normalizePrimaryIssue(String primaryIssue) {
+        return StringUtils.hasText(primaryIssue) ? primaryIssue.trim() : "未见明显异常";
+    }
+
+    private String normalizeFailureReason(String errorMessage) {
+        return StringUtils.hasText(errorMessage) ? errorMessage.trim() : "任务执行失败";
+    }
+
+    private String buildVisitName(String patientName, String examId) {
+        String normalizedPatientName = normalizePatientName(patientName);
+        if (!StringUtils.hasText(examId)) {
+            return normalizedPatientName;
+        }
+
+        return normalizedPatientName + " (" + examId.trim() + ")";
+    }
+
+    private String normalizeImageUrl(String rawUrl) {
+        if (!StringUtils.hasText(rawUrl)) {
+            return null;
+        }
+
+        String normalizedUrl = rawUrl.trim().replace('\\', '/');
+        if (normalizedUrl.startsWith("http://") || normalizedUrl.startsWith("https://") || normalizedUrl.startsWith("data:")) {
+            return normalizedUrl;
+        }
+
+        return normalizedUrl.startsWith("/") ? normalizedUrl : "/" + normalizedUrl;
+    }
+
+    private String resolveTaskImageUrl(String storedFilePath) {
+        if (!StringUtils.hasText(storedFilePath)) {
+            return null;
+        }
+
+        String normalizedPath = storedFilePath.trim().replace('\\', '/');
+        int uploadsIndex = normalizedPath.indexOf("/uploads/");
+        if (uploadsIndex < 0) {
+            return null;
+        }
+
+        return normalizedPath.substring(uploadsIndex);
+    }
+
+    private String formatRelativeTime(LocalDateTime occurredAt) {
+        if (occurredAt == null) {
+            return "--";
+        }
+
+        Duration duration = Duration.between(occurredAt, LocalDateTime.now());
+        long minutes = Math.max(duration.toMinutes(), 0L);
+        if (minutes < 1) {
+            return "刚刚";
+        }
+
+        if (minutes < 60) {
+            return minutes + "分钟前";
+        }
+
+        long hours = Math.max(duration.toHours(), 0L);
+        if (hours < 24) {
+            return hours + "小时前";
+        }
+
+        long days = Math.max(duration.toDays(), 0L);
+        if (days < 30) {
+            return days + "天前";
+        }
+
+        return occurredAt.format(RECENT_TIME_FORMATTER);
     }
 
     private String formatDateTime(LocalDateTime dateTime, DateTimeFormatter formatter) {
@@ -361,8 +658,24 @@ public class DashboardServiceImpl implements DashboardService {
     private double roundOneDecimal(double value) {
         return Math.round(value * 10.0D) / 10.0D;
     }
+
+    /**
+     * 首页时间轴事件。
+     */
+    private record DashboardEvent(LocalDateTime occurredAt, String content, String type, String color) {
+    }
+
+    /**
+     * 首页最近访问项。
+     */
+    private record DashboardVisit(LocalDateTime occurredAt,
+                                  String id,
+                                  String name,
+                                  String issue,
+                                  String type,
+                                  String tag,
+                                  String imageUrl,
+                                  String path,
+                                  Map<String, Object> query) {
+    }
 }
-
-
-
-

@@ -1,6 +1,8 @@
 package com.medical.qc.service;
 
+import com.medical.qc.bean.IssueWorkflowUpdateReq;
 import com.medical.qc.entity.HemorrhageRecord;
+import com.medical.qc.entity.QcTaskRecord;
 
 import java.util.List;
 import java.util.Map;
@@ -19,11 +21,25 @@ public interface IssueService {
     void syncHemorrhageIssue(HemorrhageRecord record);
 
     /**
+     * 同步单条异步质控任务对应的异常工单。
+     *
+     * @param taskRecord 质控任务记录
+     */
+    void syncQualityTaskIssue(QcTaskRecord taskRecord);
+
+    /**
      * 回填指定用户的脑出血历史记录到异常工单表。
      *
      * @param userId 用户 ID
      */
     void syncHemorrhageIssues(Long userId);
+
+    /**
+     * 回填指定用户的异步质控任务异常到异常工单表。
+     *
+     * @param userId 用户 ID
+     */
+    void syncQualityTaskIssues(Long userId);
 
     /**
      * 统计当前未解决的异常任务数。
@@ -97,6 +113,13 @@ public interface IssueService {
     Map<String, Object> getIssueDetail(Long userId, Long issueId);
 
     /**
+     * 获取可分派的处理人员列表。
+     *
+     * @return 人员列表
+     */
+    List<Map<String, Object>> getAssignableUsers();
+
+    /**
      * 更新异常工单状态。
      *
      * @param userId     当前用户 ID
@@ -107,4 +130,15 @@ public interface IssueService {
      * @return 更新后的工单摘要
      */
     Map<String, Object> updateIssueStatus(Long userId, Long operatorId, Long issueId, String status, String remark);
+
+    /**
+     * 更新异常工单工作流，包括状态、指派人与 CAPA 信息。
+     *
+     * @param userId     当前用户范围
+     * @param operatorId 操作人 ID
+     * @param issueId    工单 ID
+     * @param request    工作流更新请求
+     * @return 更新后的工单详情
+     */
+    Map<String, Object> updateIssueWorkflow(Long userId, Long operatorId, Long issueId, IssueWorkflowUpdateReq request);
 }

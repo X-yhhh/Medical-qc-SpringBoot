@@ -159,6 +159,15 @@
             <el-tag :type="getPriorityType(row.priority)" size="small" effect="dark">{{ row.priority || '普通' }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column prop="responsibleRoleLabel" label="责任角色" width="110" align="center">
+          <template #default="{ row }">{{ row.responsibleRoleLabel || '--' }}</template>
+        </el-table-column>
+        <el-table-column prop="dueAt" label="SLA截止" width="180" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.overdue" type="danger" effect="dark">已超期</el-tag>
+            <span>{{ row.dueAt || '--' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="status" label="状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="getStatusType(row.status)" effect="plain" class="status-badge">
@@ -221,6 +230,11 @@
           <el-descriptions-item label="发现时间">{{ currentRow.date }}</el-descriptions-item>
           <el-descriptions-item label="主异常项">{{ currentRow.issueType || '未见明显异常' }}</el-descriptions-item>
           <el-descriptions-item label="优先级">{{ currentRow.priority || '低' }}</el-descriptions-item>
+          <el-descriptions-item label="责任角色">{{ currentRow.responsibleRoleLabel || '--' }}</el-descriptions-item>
+          <el-descriptions-item label="SLA截止">
+            <span>{{ currentRow.dueAt || '--' }}</span>
+            <el-tag v-if="currentRow.overdue" type="danger" effect="dark" class="due-tag">已超期</el-tag>
+          </el-descriptions-item>
         </el-descriptions>
 
         <div class="section-block">
@@ -230,18 +244,58 @@
 
         <div class="section-block" v-if="currentSourceDetail">
           <h4 class="section-title">原始检测记录</h4>
-          <el-descriptions :column="2" border class="info-descriptions">
-            <el-descriptions-item label="记录ID">{{ currentSourceDetail.recordId }}</el-descriptions-item>
-            <el-descriptions-item label="质控结论">{{ currentSourceDetail.qcStatus || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="AI判定">{{ currentSourceDetail.prediction || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="出血风险">{{ formatProbability(currentSourceDetail.hemorrhageProbability) }}</el-descriptions-item>
-            <el-descriptions-item label="置信度">{{ currentSourceDetail.confidenceLevel || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="推理设备">{{ currentSourceDetail.device || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="检测时间">{{ currentSourceDetail.createdAt || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="检测模型">{{ currentSourceDetail.modelName || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="中线偏移">{{ currentSourceDetail.midlineShift ? (currentSourceDetail.midlineDetail || '存在中线偏移') : '未见异常' }}</el-descriptions-item>
-            <el-descriptions-item label="脑室结构">{{ currentSourceDetail.ventricleIssue ? (currentSourceDetail.ventricleDetail || '脑室结构异常') : '未见异常' }}</el-descriptions-item>
-          </el-descriptions>
+          <template v-if="isHemorrhageSourceDetail">
+            <el-descriptions :column="2" border class="info-descriptions">
+              <el-descriptions-item label="记录ID">{{ currentSourceDetail.recordId }}</el-descriptions-item>
+              <el-descriptions-item label="质控结论">{{ currentSourceDetail.qcStatus || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="AI判定">{{ currentSourceDetail.prediction || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="出血风险">{{ formatProbability(currentSourceDetail.hemorrhageProbability) }}</el-descriptions-item>
+              <el-descriptions-item label="置信度">{{ currentSourceDetail.confidenceLevel || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="推理设备">{{ currentSourceDetail.device || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="检测时间">{{ currentSourceDetail.createdAt || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="检测模型">{{ currentSourceDetail.modelName || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="中线偏移">{{ currentSourceDetail.midlineShift ? (currentSourceDetail.midlineDetail || '存在中线偏移') : '未见异常' }}</el-descriptions-item>
+              <el-descriptions-item label="脑室结构">{{ currentSourceDetail.ventricleIssue ? (currentSourceDetail.ventricleDetail || '脑室结构异常') : '未见异常' }}</el-descriptions-item>
+            </el-descriptions>
+          </template>
+          <template v-else>
+            <el-descriptions :column="2" border class="info-descriptions">
+              <el-descriptions-item label="记录ID">{{ currentSourceDetail.recordId || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="任务ID">{{ currentSourceDetail.taskId || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="任务类型">{{ currentSourceDetail.taskTypeName || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="质控结论">{{ currentSourceDetail.qcStatus || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="来源模式">{{ currentSourceDetail.sourceModeLabel || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="检测时间">{{ currentSourceDetail.createdAt || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="质控评分">{{ currentSourceDetail.qualityScore ?? '--' }}</el-descriptions-item>
+              <el-descriptions-item label="异常项数">{{ currentSourceDetail.abnormalCount ?? 0 }}</el-descriptions-item>
+              <el-descriptions-item label="主异常项">{{ currentSourceDetail.primaryIssue || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="设备">{{ currentSourceDetail.device || qualityTaskPatientInfo.device || '--' }}</el-descriptions-item>
+            </el-descriptions>
+
+            <el-descriptions v-if="Object.keys(qualityTaskPatientInfo).length" :column="3" border class="info-descriptions">
+              <el-descriptions-item label="患者姓名">{{ qualityTaskPatientInfo.name || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="性别">{{ qualityTaskPatientInfo.gender || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="年龄">{{ qualityTaskPatientInfo.age ?? '--' }}</el-descriptions-item>
+              <el-descriptions-item label="检查ID">{{ qualityTaskPatientInfo.studyId || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="Accession No">{{ qualityTaskPatientInfo.accessionNumber || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="检查日期">{{ qualityTaskPatientInfo.studyDate || '--' }}</el-descriptions-item>
+            </el-descriptions>
+
+            <div v-if="qualityTaskQcItems.length" class="task-qc-list">
+              <div
+                v-for="(item, index) in qualityTaskQcItems"
+                :key="`${item.name}-${index}`"
+                :class="['task-qc-item', item.status === '不合格' ? 'is-error' : 'is-success']"
+              >
+                <div class="task-qc-item__header">
+                  <span class="task-qc-item__name">{{ item.name }}</span>
+                  <el-tag :type="item.status === '合格' ? 'success' : 'danger'" effect="light">{{ item.status }}</el-tag>
+                </div>
+                <div class="task-qc-item__desc">{{ item.description || '--' }}</div>
+                <div v-if="item.detail" class="task-qc-item__detail">{{ item.detail }}</div>
+              </div>
+            </div>
+          </template>
         </div>
 
         <div class="section-block" v-if="detailImageUrl">
@@ -263,22 +317,80 @@
           </div>
         </div>
 
-        <div class="section-block input-block" v-if="currentRow.status !== '已解决'">
-          <h4 class="section-title">处理备注</h4>
-          <el-input
-            v-model="resolveNote"
-            type="textarea"
-            :rows="3"
-            placeholder="请输入处理意见、解决方案或备注信息..."
-          />
+        <div class="section-block input-block">
+          <h4 class="section-title">工单流转与 CAPA</h4>
+          <el-form :model="workflowForm" label-width="100px" class="workflow-form">
+            <el-form-item label="当前状态">
+              <el-select v-model="workflowForm.status" style="width: 100%">
+                <el-option label="待处理" value="待处理" />
+                <el-option label="处理中" value="处理中" />
+                <el-option label="已解决" value="已解决" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="处理人">
+              <el-select v-model="workflowForm.assigneeUserId" clearable filterable placeholder="请选择处理人" style="width: 100%">
+                <el-option
+                  v-for="user in assignableUsers"
+                  :key="user.id"
+                  :label="`${user.displayName}（${user.roleLabel}）`"
+                  :value="user.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="根因分类">
+              <el-select v-model="workflowForm.rootCauseCategory" clearable placeholder="请选择根因分类" style="width: 100%">
+                <el-option v-for="option in ROOT_CAUSE_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="根因说明">
+              <el-input v-model="workflowForm.rootCauseDetail" type="textarea" :rows="2" placeholder="请说明异常产生的根因" />
+            </el-form-item>
+            <el-form-item label="纠正措施">
+              <el-input v-model="workflowForm.correctiveAction" type="textarea" :rows="3" placeholder="请输入本次纠正措施" />
+            </el-form-item>
+            <el-form-item label="预防措施">
+              <el-input v-model="workflowForm.preventiveAction" type="textarea" :rows="3" placeholder="请输入后续预防措施" />
+            </el-form-item>
+            <el-form-item label="验证备注">
+              <el-input v-model="workflowForm.verificationNote" type="textarea" :rows="2" placeholder="请输入验证结果或复盘说明" />
+            </el-form-item>
+            <el-form-item label="处理备注">
+              <el-input
+                v-model="workflowForm.remark"
+                type="textarea"
+                :rows="3"
+                placeholder="请输入处理意见、流转说明或备注信息..."
+              />
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <div class="section-block" v-if="currentHandleLogs.length">
+          <h4 class="section-title">处理日志</h4>
+          <el-timeline class="handle-log-timeline">
+            <el-timeline-item
+              v-for="log in currentHandleLogs"
+              :key="log.id"
+              :timestamp="log.createdAt"
+              size="large"
+            >
+              <div class="handle-log-item">
+                <div class="handle-log-item__title">{{ log.actionTypeLabel }} · {{ log.operatorName || '--' }}</div>
+                <div class="handle-log-item__meta">
+                  <span v-if="log.beforeStatus || log.afterStatus">{{ log.beforeStatus || '--' }} → {{ log.afterStatus || '--' }}</span>
+                </div>
+                <div v-if="log.remark" class="handle-log-item__remark">{{ log.remark }}</div>
+              </div>
+            </el-timeline-item>
+          </el-timeline>
         </div>
       </div>
       <template #footer>
         <span class="dialog-footer">
           <el-button v-if="currentRow?.sourceType === 'hemorrhage' && currentRow?.sourceRecordId" type="primary" plain @click="openSourceRecord">查看原始记录</el-button>
           <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="submitting" :disabled="currentRow?.status === '已解决'" @click="confirmResolve">
-            {{ currentRow?.status === '已解决' ? '已完成' : '确认处理' }}
+          <el-button type="primary" :loading="submitting" @click="confirmResolve">
+            保存流转
           </el-button>
         </span>
       </template>
@@ -309,7 +421,25 @@ import {
   CaretTop, CaretBottom, Picture, FolderOpened
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSummaryStats, getIssueTrend, getIssueDistribution, getRecentIssues, getIssueDetail, updateIssueStatus } from '@/api/summary'
+import {
+  getSummaryStats,
+  getIssueTrend,
+  getIssueDistribution,
+  getRecentIssues,
+  getIssueDetail,
+  getAssignableUsers,
+  updateIssueWorkflow,
+} from '@/api/summary'
+
+const ROOT_CAUSE_OPTIONS = [
+  { label: '采集问题', value: '采集问题' },
+  { label: '设备问题', value: '设备问题' },
+  { label: '协议问题', value: '协议问题' },
+  { label: '流程问题', value: '流程问题' },
+  { label: '患者配合', value: '患者配合' },
+  { label: '数据同步', value: '数据同步' },
+  { label: '其他', value: '其他' },
+]
 
 // --- 基础状态 ---
 const updateTime = ref(dayjs().format('YYYY-MM-DD HH:mm'))
@@ -343,12 +473,17 @@ const statsCards = computed(() => [
 ])
 
 const currentSourceDetail = computed(() => currentRow.value?.sourceDetail || null)
+const isHemorrhageSourceDetail = computed(() => currentSourceDetail.value?.detailType === 'hemorrhage')
+const qualityTaskPatientInfo = computed(() => currentSourceDetail.value?.patientInfo || {})
+const qualityTaskQcItems = computed(() => (Array.isArray(currentSourceDetail.value?.qcItems) ? currentSourceDetail.value.qcItems : []))
+const currentHandleLogs = computed(() => (Array.isArray(currentRow.value?.handleLogs) ? currentRow.value.handleLogs : []))
 const detailImageUrl = computed(() => currentSourceDetail.value?.imageUrl || currentRow.value?.imageUrl || '')
 
 // --- 弹窗相关状态 ---
 const dialogVisible = ref(false)
 const currentRow = ref(null)
-const resolveNote = ref('')
+const assignableUsers = ref([])
+const workflowForm = ref(createDefaultWorkflowForm())
 const submitting = ref(false)
 const detailLoading = ref(false)
 
@@ -358,9 +493,22 @@ const pieChartRef = ref(null)
 let trendChart = null
 let pieChart = null
 
+function createDefaultWorkflowForm() {
+  return {
+    status: '待处理',
+    remark: '',
+    assigneeUserId: null,
+    rootCauseCategory: '',
+    rootCauseDetail: '',
+    correctiveAction: '',
+    preventiveAction: '',
+    verificationNote: '',
+  }
+}
+
 // --- 生命周期 ---
 onMounted(async () => {
-  await loadAllData()
+  await Promise.all([loadAllData(), loadAssignableUsers()])
   window.addEventListener('resize', handleResize)
 })
 
@@ -427,6 +575,19 @@ const fetchDistribution = async () => {
     initPieChart(res)
   } catch (e) {
     console.error('获取分布数据失败', e)
+  }
+}
+
+/**
+ * 获取可分派处理人员列表。
+ */
+const loadAssignableUsers = async () => {
+  try {
+    const response = await getAssignableUsers()
+    assignableUsers.value = Array.isArray(response) ? response : []
+  } catch (error) {
+    console.error('获取可分派人员失败', error)
+    assignableUsers.value = []
   }
 }
 
@@ -526,7 +687,7 @@ const handleExport = async () => {
       return
     }
 
-    const headers = ['异常ID', '发现时间', '患者姓名', '检查编号', '检查类型', '主异常项', '异常描述', '优先级', '状态']
+    const headers = ['异常ID', '发现时间', '患者姓名', '检查编号', '检查类型', '主异常项', '异常描述', '优先级', '责任角色', 'SLA截止', '状态']
     const csvRows = exportRows.map(row => [
       row.id,
       row.date,
@@ -536,6 +697,8 @@ const handleExport = async () => {
       row.issueType,
       row.description,
       row.priority,
+      row.responsibleRoleLabel,
+      row.dueAt,
       row.status,
     ].map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))
 
@@ -667,14 +830,29 @@ const formatProbability = (probability) => {
  */
 const openIssueDetail = async (row) => {
   currentRow.value = { ...row }
-  resolveNote.value = row.remark || ''
+  workflowForm.value = {
+    ...createDefaultWorkflowForm(),
+    status: row.status || '待处理',
+    remark: row.remark || '',
+    assigneeUserId: row.assigneeUserId ?? null,
+  }
   dialogVisible.value = true
   detailLoading.value = true
 
   try {
     const detail = await getIssueDetail(row.id)
     currentRow.value = { ...currentRow.value, ...detail }
-    resolveNote.value = detail?.remark || row.remark || ''
+    workflowForm.value = {
+      ...createDefaultWorkflowForm(),
+      status: detail?.status || row.status || '待处理',
+      remark: detail?.remark || row.remark || '',
+      assigneeUserId: detail?.assigneeUserId ?? row.assigneeUserId ?? null,
+      rootCauseCategory: detail?.capa?.rootCauseCategory || '',
+      rootCauseDetail: detail?.capa?.rootCauseDetail || '',
+      correctiveAction: detail?.capa?.correctiveAction || '',
+      preventiveAction: detail?.capa?.preventiveAction || '',
+      verificationNote: detail?.capa?.verificationNote || '',
+    }
   } catch (error) {
     console.error('获取异常工单详情失败', error)
     ElMessage.error('获取异常详情失败')
@@ -714,19 +892,25 @@ const openSourceRecord = () => {
  * 提交处理备注并更新状态
  */
 const confirmResolve = async () => {
-  if (!resolveNote.value && currentRow.value.status !== '已解决') {
+  if (!workflowForm.value.remark && workflowForm.value.status !== '已解决') {
     ElMessage.warning('请填写处理备注')
     return
   }
 
   submitting.value = true
   try {
-    await updateIssueStatus(currentRow.value.id, {
-      status: '已解决',
-      remark: resolveNote.value,
+    await updateIssueWorkflow(currentRow.value.id, {
+      status: workflowForm.value.status,
+      remark: workflowForm.value.remark,
+      assigneeUserId: workflowForm.value.assigneeUserId,
+      rootCauseCategory: workflowForm.value.rootCauseCategory,
+      rootCauseDetail: workflowForm.value.rootCauseDetail,
+      correctiveAction: workflowForm.value.correctiveAction,
+      preventiveAction: workflowForm.value.preventiveAction,
+      verificationNote: workflowForm.value.verificationNote,
     })
 
-    ElMessage.success('处理成功')
+    ElMessage.success('工单流转已更新')
     dialogVisible.value = false
     await Promise.all([
       fetchStats(),
@@ -982,6 +1166,10 @@ const confirmResolve = async () => {
   font-family: monospace;
 }
 
+.due-tag {
+  margin-left: 8px;
+}
+
 .info-descriptions {
   margin-bottom: 24px;
 }
@@ -1007,6 +1195,60 @@ const confirmResolve = async () => {
   line-height: 1.6;
 }
 
+.workflow-form {
+  background: #f8fafc;
+  padding: 16px 16px 4px;
+  border-radius: 8px;
+  border: 1px solid #eef2f7;
+}
+
+.task-qc-list {
+  display: grid;
+  gap: 12px;
+}
+
+.task-qc-item {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+}
+
+.task-qc-item.is-error {
+  border-color: rgba(245, 108, 108, 0.24);
+  background: rgba(254, 242, 242, 0.66);
+}
+
+.task-qc-item.is-success {
+  border-color: rgba(103, 194, 58, 0.22);
+  background: rgba(240, 253, 244, 0.72);
+}
+
+.task-qc-item__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.task-qc-item__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.task-qc-item__desc {
+  margin-top: 8px;
+  color: #606266;
+  line-height: 1.6;
+}
+
+.task-qc-item__detail {
+  margin-top: 8px;
+  color: #b42318;
+  line-height: 1.6;
+}
+
 .image-wrapper {
   background: #f5f7fa;
   border-radius: 8px;
@@ -1028,6 +1270,27 @@ const confirmResolve = async () => {
   flex-direction: column;
   align-items: center;
   color: #909399;
+}
+
+.handle-log-timeline {
+  padding-left: 8px;
+}
+
+.handle-log-item__title {
+  font-weight: 600;
+  color: #303133;
+}
+
+.handle-log-item__meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.handle-log-item__remark {
+  margin-top: 6px;
+  color: #606266;
+  line-height: 1.6;
 }
 </style>
 
