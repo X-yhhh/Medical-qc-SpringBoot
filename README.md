@@ -1,15 +1,15 @@
 # Medical QC SYS
 
-Medical QC SYS 是一个面向医学影像质控场景的前后端分离项目，当前由 `Spring Boot` 后端、`Vue 3` 前端和一个独立的 Python 推理服务组成。系统已经完成统一模型落地，默认运行数据库为 `medical_qc_sys_unified`。
+Medical QC SYS 是一个面向医学影像质控场景的前后端分离项目，当前由 `Spring Boot` 后端、`Vue 3` 前端和独立 Python 推理服务组成。系统围绕统一质控模型组织任务、结果、异常工单、患者信息和规则配置，当前唯一真实接入 AI 推理的链路为头部出血检测。
 
-## 当前架构
+## 项目概览
 
 ```mermaid
 flowchart LR
-  Browser["Browser"] --> Nginx["Nginx / Vite Dev"]
-  Nginx --> Frontend["Vue 3 Frontend"]
-  Nginx --> Backend["Spring Boot Backend"]
-  Backend --> MySQL["MySQL: medical_qc_sys_unified"]
+  Browser["Browser"] --> Gateway["Nginx / Vite Dev"]
+  Gateway --> Frontend["Vue 3 Frontend"]
+  Gateway --> Backend["Spring Boot Backend"]
+  Backend --> MySQL["MySQL"]
   Backend --> Redis["Redis Session / Cache"]
   Backend --> ActiveMQ["ActiveMQ"]
   Backend --> Uploads["Local uploads/"]
@@ -17,66 +17,23 @@ flowchart LR
   Backend --> Python["Python Inference Service"]
 ```
 
-## 功能概览
+## 当前能力
 
-| 模块 | 当前状态 | 说明 |
+| 模块 | 状态 | 说明 |
 | --- | --- | --- |
-| 认证与权限 | 已实现 | 支持登录、注册、会话查询、管理员/医生角色隔离 |
-| 仪表盘 | 已实现 | 展示质控趋势、风险预警、待办事项和最近动态 |
-| 头部出血检测 | 已实现 | 真实接入 Python WebSocket 推理服务，结果写入统一模型 |
-| 异步质控任务 | 已实现 | 头部平扫、胸部平扫、胸部增强、冠脉 CTA 统一走任务中心 |
-| 患者信息管理 | 已实现 | 五类任务共享统一患者/检查模型 |
-| PACS 查询 | 已实现 | 基于 `pacs_study_cache` 查询并补齐统一患者主数据 |
-| 异常工单 | 已实现 | 支持异常统计、详情、流转日志和 CAPA |
-| 规则中心 | 已实现 | 管理任务类型、异常项、优先级、责任角色和 SLA |
+| 登录注册与权限 | 已实现 | 支持管理员、医生两类角色，会话存储基于 Redis |
+| 仪表盘 | 已实现 | 展示趋势、风险预警、待办事项和快捷入口 |
+| 头部出血检测 | 已实现 | 接入 Python WebSocket 推理服务，结果写入统一模型 |
+| 其他质控任务 | 已实现 | 头部平扫、胸部平扫、胸部增强、冠脉 CTA 走统一任务中心 |
+| 患者信息管理 | 已实现 | 五类任务共享统一患者和检查模型 |
+| PACS 查询 | 已实现 | 基于缓存表检索检查记录并补齐主数据 |
+| 异常工单 | 已实现 | 支持统计、详情、状态流转和 CAPA |
+| 规则中心 | 已实现 | 支持维护优先级、责任角色、SLA 和自动建单策略 |
 
 说明：
 
-- 头部出血检测当前走真实 AI 推理链路。
-- 其余四类质控任务当前仍通过统一任务模型返回 mock 结果，但写入、查询和工单流程已经统一。
-
-## 仓库结构
-
-```text
-Medical QC SYS/
-├─ deploy/
-│  ├─ README.md
-│  └─ nginx/
-│     └─ medical-qc.conf
-├─ docs/
-│  ├─ deployment-production.md
-│  └─ project-documentation.md
-├─ medical-qc-backend/
-│  ├─ pom.xml
-│  ├─ python_model/
-│  └─ src/
-│     ├─ main/
-│     │  ├─ java/com/medical/qc/
-│     │  │  ├─ bean/
-│     │  │  ├─ common/
-│     │  │  ├─ config/
-│     │  │  ├─ messaging/
-│     │  │  ├─ modules/
-│     │  │  ├─ shared/
-│     │  │  └─ support/
-│     │  └─ resources/
-│     │     ├─ application.properties
-│     │     ├─ application-dev.properties
-│     │     ├─ application-prod.properties
-│     │     ├─ db/baseline/
-│     │     └─ mapper/
-│     └─ test/
-├─ medical-qc-frontend/
-│  ├─ package.json
-│  └─ src/
-│     ├─ app/
-│     ├─ assets/
-│     ├─ components/
-│     ├─ composables/
-│     ├─ modules/
-│     └─ utils/
-└─ .venv/
-```
+- `hemorrhage` 为当前真实 AI 检测链路。
+- `head`、`chest-non-contrast`、`chest-contrast`、`coronary-cta` 当前统一走任务模型，但分析结果以 mock 数据为主。
 
 ## 技术栈
 
@@ -100,31 +57,32 @@ Medical QC SYS/
 - ECharts 6
 - Vite 7
 
-### 推理服务
+### Python 推理服务
 
 - Python 3.10+
-- WebSocket 服务
+- WebSocket
 - PyTorch / TorchVision
 - OpenCV / Pillow / NumPy
 
-## 数据库与迁移
+## 仓库结构
 
-- 运行库：`medical_qc_sys_unified`
-- Flyway 位置：`medical-qc-backend/src/main/resources/db/baseline`
-- 当前基线脚本：`V7__create_unified_schema_baseline.sql`
-
-核心表包括：
-
-- `users` / `user_roles`
-- `patients` / `studies` / `study_files`
-- `qc_task_types` / `qc_tasks` / `qc_results` / `qc_result_items`
-- `issue_tickets` / `issue_action_logs` / `issue_capa_records`
-- `qc_rules`
-- `pacs_study_cache`
+```text
+Medical QC SYS/
+├─ deploy/                    # 反向代理与部署骨架
+├─ docs/                      # 项目文档中心
+├─ medical-qc-backend/        # Spring Boot 后端
+│  ├─ python_model/           # Python 推理与训练脚本
+│  ├─ scripts/                # 后端辅助脚本
+│  └─ src/
+├─ medical-qc-frontend/       # Vue 3 前端
+│  ├─ scripts/                # 前端启动脚本
+│  └─ src/
+└─ README.md
+```
 
 ## 快速开始
 
-### 1. 准备依赖
+### 1. 环境准备
 
 - MySQL 8+
 - Redis 6+
@@ -140,7 +98,7 @@ Medical QC SYS/
 CREATE DATABASE medical_qc_sys_unified CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 ```
 
-应用首次启动时会通过 Flyway 自动初始化表结构。
+Flyway 首次启动时会自动执行基线脚本。
 
 ### 3. 启动后端
 
@@ -149,11 +107,7 @@ cd medical-qc-backend
 mvn spring-boot:run
 ```
 
-默认配置见：
-
-- `medical-qc-backend/src/main/resources/application.properties`
-- `medical-qc-backend/src/main/resources/application-dev.properties`
-- `medical-qc-backend/src/main/resources/application-prod.properties`
+默认端口：`http://localhost:8080`
 
 ### 4. 启动前端
 
@@ -163,10 +117,7 @@ npm install
 npm run dev
 ```
 
-默认访问地址：
-
-- 前端：`http://localhost:5173`
-- 后端：`http://localhost:8080`
+默认端口：`http://localhost:5173`
 
 ## 常用命令
 
@@ -190,15 +141,21 @@ npm run lint
 npm run type-check
 ```
 
-## 当前开发约束
+## 数据库与运行约束
 
-- 数据库结构变更只通过 Flyway 基线后续版本追加，不再维护旧架构迁移脚本。
-- 统一模型是唯一运行路径，不再保留旧库回退方案。
-- `dev` 环境允许自动拉起本地 Python 和 ActiveMQ；`prod` 环境默认禁止。
-- `uploads/` 属于当前运行数据目录，不应按旧架构残留处理。
+- 运行库固定为 `medical_qc_sys_unified`
+- Flyway 基线位于 `medical-qc-backend/src/main/resources/db/baseline`
+- 上传目录使用本地 `uploads/`
+- `dev` 环境允许自动拉起本地 Python 和 ActiveMQ
+- `prod` 环境默认禁止自动拉起外部进程
 
-## 文档
+## 文档导航
 
-- 项目总文档：`docs/project-documentation.md`
+- 文档索引：`docs/README.md`
+- 项目架构文档：`docs/project-documentation.md`
+- 开发文档：`docs/development-guide.md`
+- 功能介绍：`docs/feature-overview.md`
+- 使用说明：`docs/user-guide.md`
 - 生产部署说明：`docs/deployment-production.md`
 - 部署骨架说明：`deploy/README.md`
+- 前端子项目说明：`medical-qc-frontend/README.md`

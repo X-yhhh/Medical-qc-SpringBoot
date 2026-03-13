@@ -1,260 +1,217 @@
-# Medical QC SYS 项目文档
+# Medical QC SYS 项目架构文档
 
 更新时间：2026-03-13
 
-## 1. 项目定位
+## 1. 文档定位
 
-Medical QC SYS 是一个围绕医学影像质控流程构建的业务系统，目标不是单点模型演示，而是把任务提交、结果落库、异常建单、患者信息维护、PACS 查询和后台治理统一到同一套业务模型中。
+本文件只负责说明项目的当前架构、模块边界、核心数据模型和运行依赖，不重复展开开发步骤、业务操作步骤或部署命令。
 
-当前系统已经完成统一模型落地，运行主路径固定为：
+相关文档入口：
 
-- 单一运行库：`medical_qc_sys_unified`
-- 后端形态：模块化单体
-- 前端形态：模块化单页应用
-- 推理方式：Python WebSocket 服务
+- 开发文档：`docs/development-guide.md`
+- 功能介绍：`docs/feature-overview.md`
+- 使用说明：`docs/user-guide.md`
+- 部署说明：`docs/deployment-production.md`
 
-## 2. 总体架构
+## 2. 项目目标
+
+Medical QC SYS 用于承接医学影像质控流程中的关键环节，包括：
+
+- 任务提交与结果回收
+- 患者与检查主数据管理
+- PACS 缓存记录查询
+- 异常建单与处置流转
+- 规则配置与治理
+
+当前系统采用统一模型作为唯一运行路径，不再维护旧库兼容方案。
+
+## 3. 总体架构
 
 ```mermaid
 flowchart LR
   Browser["Browser"] --> Gateway["Nginx / Vite Dev"]
-  Gateway --> FE["Vue 3 Frontend"]
-  Gateway --> BE["Spring Boot Backend"]
-  BE --> DB["MySQL"]
-  BE --> RD["Redis"]
-  BE --> MQ["ActiveMQ"]
-  BE --> FS["Local uploads/"]
-  BE --> PACS["pacs_study_cache"]
-  BE --> AI["Python Inference Service"]
+  Gateway --> Frontend["Vue 3 Frontend"]
+  Gateway --> Backend["Spring Boot Backend"]
+  Backend --> DB["MySQL: medical_qc_sys_unified"]
+  Backend --> Redis["Redis"]
+  Backend --> MQ["ActiveMQ"]
+  Backend --> FS["uploads/"]
+  Backend --> PACS["pacs_study_cache"]
+  Backend --> AI["Python Inference Service"]
 ```
 
-### 2.1 后端职责
+## 4. 子系统职责
 
-- 认证、鉴权、会话管理
-- 统一患者、检查、任务、结果、工单读写
-- PACS 缓存检索与患者主数据补齐
-- 规则中心与管理员操作
-- 对接 ActiveMQ 与 Python 推理服务
+### 4.1 前端
 
-### 2.2 前端职责
+前端负责：
 
-- 登录、注册、路由守卫与角色菜单
-- 仪表盘、任务中心、患者信息、工单和规则中心页面
-- PACS 查询弹窗与患者档案联动
-- 图表可视化与任务结果展示
+- 登录注册与路由守卫
+- 医生、管理员两类菜单与页面权限隔离
+- 质控任务提交、查询和结果展示
+- 患者信息维护与 PACS 记录选择
+- 异常工单查看与处理
+- 规则中心和用户管理
 
-### 2.3 Python 服务职责
+### 4.2 后端
 
-- 提供头部出血检测推理接口
-- 通过 WebSocket 返回结构化推理结果
-- 被后端作为 `AiGateway` 调用
+后端负责：
 
-## 3. 后端结构
+- 用户认证、角色鉴权、会话管理
+- 患者、检查、任务、结果和工单统一读写
+- PACS 缓存检索与主数据同步
+- 规则查询、自动建单、异常流转
+- 对接 ActiveMQ 和 Python WebSocket 推理服务
+
+### 4.3 Python 推理服务
+
+Python 服务负责：
+
+- 接收头部出血检测请求
+- 执行模型推理
+- 返回结构化推理结果
+
+## 5. 后端结构
 
 路径：`medical-qc-backend/src/main/java/com/medical/qc`
 
-### 3.1 一级目录
+### 5.1 一级目录
 
-- `bean`
-- `common`
-- `config`
-- `messaging`
-- `modules`
-- `shared`
-- `support`
+| 目录 | 作用 |
+| --- | --- |
+| `bean` | 请求体与基础对象 |
+| `common` | 通用常量、枚举、异常等 |
+| `config` | Spring 配置与基础设施装配 |
+| `messaging` | 消息相关实现 |
+| `modules` | 业务模块 |
+| `shared` | AI、消息、存储等共享能力 |
+| `support` | 会话、任务类型、组装逻辑等辅助类 |
 
-### 3.2 模块划分
+### 5.2 业务模块
 
 | 模块 | 作用 |
 | --- | --- |
 | `modules/auth` | 登录、注册、当前用户 |
 | `modules/adminuser` | 管理员用户管理 |
 | `modules/dashboard` | 仪表盘聚合查询 |
-| `modules/issue` | 异常工单统计、详情和流转 |
+| `modules/issue` | 异常统计、详情和流转 |
 | `modules/pacs` | PACS 缓存查询 |
 | `modules/patient` | 患者信息管理 |
-| `modules/qcresult` | 头部出血检测结果相关能力 |
+| `modules/qcresult` | 头部出血检测记录 |
 | `modules/qcrule` | 规则中心 |
-| `modules/qctask` | 统一任务中心与异步任务查询 |
-| `modules/unified` | 统一模型读写与跨模块查询支撑 |
+| `modules/qctask` | 统一质控任务中心 |
+| `modules/unified` | 统一数据模型支撑 |
 
-### 3.3 公共基础设施
+### 5.3 关键接口分组
 
-| 路径 | 作用 |
+| 接口前缀 | 用途 |
 | --- | --- |
-| `shared/ai` | AI 网关抽象与 Python WebSocket 实现 |
-| `shared/messaging` | 消息总线抽象与 ActiveMQ 实现 |
-| `shared/storage` | 文件存储抽象与本地存储实现 |
-| `support` | 任务类型、会话用户、结果组装等辅助逻辑 |
+| `/api/v1/auth` | 认证与当前用户 |
+| `/api/v1/dashboard` | 仪表盘概览与趋势 |
+| `/api/v1/quality` | 质控任务、头部出血检测、历史记录 |
+| `/api/v1/patient-info` | 患者信息管理 |
+| `/api/v1/pacs` | PACS 记录查询 |
+| `/api/v1/summary` | 异常汇总与工单流转 |
+| `/api/v1/admin/users` | 管理员用户管理 |
+| `/api/v1/admin/qc-rules` | 规则中心 |
 
-## 4. 前端结构
+## 6. 前端结构
 
 路径：`medical-qc-frontend/src`
 
-### 4.1 一级目录
+### 6.1 一级目录
 
-- `app`
-- `assets`
-- `components`
-- `composables`
-- `modules`
-- `utils`
+| 目录 | 作用 |
+| --- | --- |
+| `app` | 应用入口、路由、全局装配 |
+| `assets` | 样式与静态资源 |
+| `components` | 通用组件 |
+| `composables` | 复用逻辑 |
+| `modules` | 页面级业务模块 |
+| `utils` | 工具方法、权限与认证辅助 |
 
-### 4.2 模块划分
+### 6.2 页面模块
 
 | 模块 | 作用 |
 | --- | --- |
-| `modules/auth` | 登录与注册页面 |
+| `modules/auth` | 登录与注册 |
 | `modules/app-shell` | 主布局与无权限页 |
 | `modules/dashboard` | 仪表盘 |
-| `modules/issue` | 异常汇总与处理 |
+| `modules/qctask` | 五类质控任务与任务中心 |
 | `modules/patient` | 患者信息管理 |
+| `modules/issue` | 异常汇总与工单详情 |
+| `modules/admin-user` | 用户管理 |
 | `modules/qcrule` | 规则中心 |
-| `modules/qctask` | 质控任务页面与任务中心 |
-| `modules/admin-user` | 用户与权限 |
 
-### 4.3 路由组织
+### 6.3 路由组
 
-| 路由组 | 文件 | 内容 |
-| --- | --- | --- |
-| 公开路由 | `app/router/routes/publicRoutes.js` | 登录、注册、无权限页 |
-| 质控路由 | `app/router/routes/qualityRoutes.js` | 仪表盘、各任务页、任务中心 |
-| 患者路由 | `app/router/routes/patientRoutes.js` | 五类患者信息管理 |
-| 工单路由 | `app/router/routes/issueRoutes.js` | 异常汇总 |
-| 管理路由 | `app/router/routes/adminRoutes.js` | 用户管理、规则中心 |
+| 路由文件 | 内容 |
+| --- | --- |
+| `app/router/routes/publicRoutes.js` | 登录、注册、无权限页 |
+| `app/router/routes/qualityRoutes.js` | 仪表盘、质控任务、任务中心 |
+| `app/router/routes/patientRoutes.js` | 五类患者信息管理页 |
+| `app/router/routes/issueRoutes.js` | 异常汇总 |
+| `app/router/routes/adminRoutes.js` | 用户管理、规则中心 |
 
-## 5. 当前业务能力
+## 7. 核心数据模型
 
-### 5.1 头部出血检测
+### 7.1 运行库
 
-- 医生上传本地图像或通过 PACS 选择检查
-- 后端写入统一患者与检查上下文
-- 后端调用 Python WebSocket 推理服务
-- 推理结果落到 `qc_tasks / qc_results / qc_result_items`
-- 异常结果可生成 `issue_tickets`
-
-### 5.2 异步质控任务
-
-- 覆盖 `head`、`chest-non-contrast`、`chest-contrast`、`coronary-cta`
-- 统一写入 `qc_tasks`
-- 当前任务结果仍以 mock 结果为主
-- 任务查询、汇总统计和异常工单路径已统一
-
-### 5.3 患者与 PACS
-
-- 患者主数据统一落到 `patients`
-- 检查实例统一落到 `studies`
-- 检查相关文件统一落到 `study_files`
-- PACS 查询以 `pacs_study_cache` 为入口
-- 前端患者页面支持按任务类型管理档案
-
-### 5.4 工单与规则
-
-- 异常工单统一落到 `issue_tickets`
-- 流转日志落到 `issue_action_logs`
-- CAPA 信息落到 `issue_capa_records`
-- 规则中心统一维护任务类型、异常项、优先级、责任角色与 SLA
-
-## 6. 数据库模型
-
-### 6.1 当前运行库
-
-- 数据库名：`medical_qc_sys_unified`
+- 数据库：`medical_qc_sys_unified`
 - Flyway 目录：`classpath:db/baseline`
 - 当前基线：`V7__create_unified_schema_baseline.sql`
 
-### 6.2 核心表
+### 7.2 核心表
 
-| 分组 | 表名 |
+| 领域 | 表名 |
 | --- | --- |
-| 身份认证 | `user_roles`, `users` |
+| 用户与角色 | `user_roles`, `users` |
 | 患者与检查 | `patients`, `studies`, `study_files` |
 | 任务与结果 | `qc_task_types`, `qc_tasks`, `qc_results`, `qc_result_items` |
 | 异常工单 | `issue_tickets`, `issue_action_logs`, `issue_capa_records` |
 | 配置与缓存 | `qc_rules`, `pacs_study_cache` |
 
-### 6.3 当前原则
+### 7.3 模型关系
 
-- 只维护统一模型，不再保留旧库表结构说明
-- 数据库结构变更通过 Flyway 追加版本实现
-- 不再通过运行时逻辑自动补表
+核心链路如下：
 
-## 7. 关键运行配置
+1. 患者信息写入 `patients`
+2. 检查实例写入 `studies`
+3. 文件资源写入 `study_files`
+4. 质控任务写入 `qc_tasks`
+5. 结果摘要与明细写入 `qc_results`、`qc_result_items`
+6. 异常根据规则生成 `issue_tickets`
+7. 流转记录和 CAPA 写入 `issue_action_logs`、`issue_capa_records`
+
+## 8. 关键运行配置
 
 路径：`medical-qc-backend/src/main/resources`
 
-### 7.1 默认配置
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `server.port` | `8080` | 后端端口 |
+| `spring.datasource.url` | `jdbc:mysql://localhost:3306/medical_qc_sys_unified...` | MySQL 连接 |
+| `spring.data.redis.host` | `localhost` | Redis 地址 |
+| `spring.activemq.broker-url` | `tcp://127.0.0.1:61616` | ActiveMQ 地址 |
+| `python.model_server.url` | `ws://localhost:8765` | Python 推理服务 |
+| `app.storage.local.root` | `uploads` | 文件上传目录 |
 
-- 服务端口：`8080`
-- 数据库：`medical_qc_sys_unified`
-- Redis：`localhost:6379`
-- ActiveMQ：`tcp://127.0.0.1:61616`
-- Python 服务：`ws://localhost:8765`
-- 本地文件根目录：`uploads`
+环境差异：
 
-### 7.2 环境差异
+- `application.properties`：通用默认配置
+- `application-dev.properties`：开发环境可自动拉起 Python 和 ActiveMQ
+- `application-prod.properties`：生产环境禁止自动拉起外部进程
 
-| 文件 | 作用 |
-| --- | --- |
-| `application.properties` | 通用默认配置 |
-| `application-dev.properties` | 开发环境自动拉起 Python 和 ActiveMQ |
-| `application-prod.properties` | 生产环境禁用隐式拉起外部进程 |
+## 9. 当前实现边界
 
-## 8. 开发与验证
+- 头部出血检测是当前唯一真实 AI 推理链路
+- 其余四类任务目前仍以 mock 结果驱动统一任务中心
+- PACS 当前基于缓存表，不是直接对接 DICOM 网关
+- 会话依赖 Redis，未使用无状态 JWT 模式
 
-### 8.1 启动后端
+## 10. 文档维护原则
 
-```powershell
-cd medical-qc-backend
-mvn spring-boot:run
-```
-
-### 8.2 启动前端
-
-```powershell
-cd medical-qc-frontend
-npm install
-npm run dev
-```
-
-### 8.3 常用验证命令
-
-```powershell
-cd medical-qc-backend
-mvn clean test
-```
-
-```powershell
-cd medical-qc-frontend
-npm run build
-```
-
-当前仓库已验证：
-
-- 后端测试可通过
-- 前端构建可通过
-
-## 9. 部署约束
-
-- 生产环境不自动拉起本地 Python 和 ActiveMQ
-- 反向代理建议使用 `deploy/nginx/medical-qc.conf`
-- 上传目录 `uploads/` 需要持久化存储
-- MySQL、Redis、ActiveMQ、Python 推理服务推荐外置
-
-可配合阅读：
-
-- `docs/deployment-production.md`
-- `deploy/README.md`
-
-## 10. 当前注意事项
-
-- 头部出血检测是当前唯一真实接入 AI 的链路
-- 其余四类质控任务当前仍返回 mock 结果
-- 会话存储依赖 Redis
-- PACS 当前基于缓存表，不是直接 DICOM 网关
-
-## 11. 文档维护原则
-
-- README 只描述当前可运行状态
-- 项目文档只描述当前架构、当前模型和当前部署方式
-- 不再保留重构过程、切换清单或旧架构迁移说明
+- 根 `README.md` 只承担项目入口和快速启动职责
+- `docs/project-documentation.md` 只描述当前架构
+- 开发、功能、使用、部署文档各自独立，不互相重复
+- 发现模板文档或过期文档时，优先重写；无保留价值时再删除
