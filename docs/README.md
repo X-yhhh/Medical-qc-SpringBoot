@@ -24,29 +24,3 @@
 | `deploy/README.md` | 部署目录和模板说明 |
 | `medical-qc-frontend/README.md` | 前端子项目说明 |
 
-## 3. 当前整理策略
-
-- 根 `README.md` 只保留高层概览和启动入口
-- `docs` 目录承载详细文档，避免 README 过长
-- 架构、开发、功能、使用、部署分别独立，减少内容重复
-- 子项目文档只保留和子项目直接相关的信息
-
-## 4. 哪些文档适合删除
-
-当前仓库中，明显应该清理的是“模板型、失效型、重复型”文档。
-
-本次已处理：
-
-- 已将 `medical-qc-frontend/README.md` 从默认 Vue 模板内容改为项目实际说明
-
-当前不建议删除：
-
-- `docs/project-documentation.md`：仍承担架构说明职责
-- `docs/deployment-production.md`：仍承担生产部署职责
-- `deploy/README.md`：仍承担部署目录说明职责
-
-后续若再出现以下情况，建议直接删除或重写：
-
-- 与根 `README.md` 完全重复的文档
-- 仍保留脚手架默认内容的模板文档
-- 描述旧架构、旧库名、旧启动方式且已不再可用的文档
