@@ -108,7 +108,7 @@
 import { ref, reactive } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
-import { searchPacsStudies } from '@/api/quality'
+import { searchPacsStudies } from '@/modules/qctask/api/qualityApi'
 
 /**
  * PACS查询对话框组件

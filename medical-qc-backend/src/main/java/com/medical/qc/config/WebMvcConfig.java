@@ -1,6 +1,6 @@
 package com.medical.qc.config;
 
-import com.medical.qc.entity.User;
+import com.medical.qc.modules.auth.persistence.entity.User;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -54,3 +54,4 @@ public class WebMvcConfig implements WebMvcConfigurer {
         }
     }
 }
+

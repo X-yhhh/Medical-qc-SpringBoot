@@ -1,6 +1,6 @@
 package com.medical.qc.support;
 
-import com.medical.qc.entity.HemorrhageRecord;
+import com.medical.qc.modules.qcresult.model.HemorrhageRecord;
 import org.springframework.util.StringUtils;
 
 /**
@@ -139,3 +139,4 @@ public final class HemorrhageIssueSupport {
         return "主要异常：" + (StringUtils.hasText(primaryIssue) ? primaryIssue : "未见明显异常");
     }
 }
+

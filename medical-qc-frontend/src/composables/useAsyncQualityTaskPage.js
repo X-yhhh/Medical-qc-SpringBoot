@@ -1,6 +1,6 @@
 import { reactive, ref, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getQualityTask } from '@/api/quality'
+import { getQualityTask } from '@/modules/qctask/api/qualityApi'
 
 const POLL_INTERVAL_MS = 1000
 const POLL_TIMEOUT_MS = 60000

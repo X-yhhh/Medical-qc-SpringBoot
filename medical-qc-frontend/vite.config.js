@@ -59,4 +59,42 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return
+          }
+
+          if (id.includes('@element-plus/icons-vue')) {
+            return 'vendor-element-plus-icons'
+          }
+
+          if (id.includes('zrender')) {
+            return 'vendor-zrender'
+          }
+
+          if (id.includes('echarts')) {
+            return 'vendor-echarts'
+          }
+
+          if (id.includes('element-plus') || id.includes('@element-plus')) {
+            return 'vendor-element-plus'
+          }
+
+          if (id.includes('dayjs')) {
+            return 'vendor-dayjs'
+          }
+
+          if (id.includes('vue') || id.includes('pinia') || id.includes('vue-router')) {
+            return 'vendor-vue'
+          }
+
+          return 'vendor-misc'
+        },
+      },
+    },
+  },
 })

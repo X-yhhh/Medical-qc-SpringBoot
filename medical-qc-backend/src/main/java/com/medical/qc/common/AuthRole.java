@@ -54,3 +54,4 @@ public enum AuthRole {
                 .orElse(DOCTOR);
     }
 }
+

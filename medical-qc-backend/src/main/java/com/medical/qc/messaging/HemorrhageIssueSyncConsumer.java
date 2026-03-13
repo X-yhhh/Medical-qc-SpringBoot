@@ -1,8 +1,6 @@
 package com.medical.qc.messaging;
 
-import com.medical.qc.entity.HemorrhageRecord;
-import com.medical.qc.mapper.HemorrhageRecordMapper;
-import com.medical.qc.service.IssueService;
+import com.medical.qc.modules.issue.application.IssueServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -17,28 +15,19 @@ import org.springframework.stereotype.Component;
 public class HemorrhageIssueSyncConsumer {
     private static final Logger log = LoggerFactory.getLogger(HemorrhageIssueSyncConsumer.class);
 
-    private final HemorrhageRecordMapper hemorrhageRecordMapper;
-    private final IssueService issueService;
+    private final IssueServiceImpl issueService;
 
-    public HemorrhageIssueSyncConsumer(HemorrhageRecordMapper hemorrhageRecordMapper,
-                                       IssueService issueService) {
-        this.hemorrhageRecordMapper = hemorrhageRecordMapper;
+    public HemorrhageIssueSyncConsumer(IssueServiceImpl issueService) {
         this.issueService = issueService;
     }
 
     @JmsListener(destination = "${app.messaging.activemq.queue.hemorrhage-issue-sync}")
     public void consume(HemorrhageIssueSyncMessage message) {
-        if (message == null || message.getRecordId() == null) {
+        if (message == null || message.getTaskId() == null) {
             log.warn("收到无效的脑出血异常同步消息");
             return;
         }
 
-        HemorrhageRecord record = hemorrhageRecordMapper.selectById(message.getRecordId());
-        if (record == null) {
-            log.warn("脑出血记录不存在，忽略异常同步消息，recordId={}", message.getRecordId());
-            return;
-        }
-
-        issueService.syncHemorrhageIssue(record);
+        issueService.syncHemorrhageIssue(message.getTaskId());
     }
 }

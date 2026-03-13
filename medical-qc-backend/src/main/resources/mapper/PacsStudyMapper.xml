@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
-<mapper namespace="com.medical.qc.mapper.PacsStudyMapper">
+<mapper namespace="com.medical.qc.modules.pacs.persistence.mapper.PacsStudyMapper">
 
-    <resultMap id="PacsStudyCacheResultMap" type="com.medical.qc.entity.PacsStudyCache">
+    <resultMap id="PacsStudyCacheResultMap" type="com.medical.qc.modules.pacs.model.PacsStudyCache">
         <id column="id" property="id" />
         <result column="study_instance_uid" property="studyInstanceUid" />
         <result column="patient_id" property="patientId" />
@@ -45,26 +45,6 @@
         </where>
     </sql>
 
-    <sql id="PacsPatientTableWhereClause">
-        <where>
-            <if test="patientId != null and patientId != ''">
-                AND COALESCE(pi.patient_id, p.patient_id) = #{patientId}
-            </if>
-            <if test="patientName != null and patientName != ''">
-                AND COALESCE(pi.patient_name, p.patient_name) LIKE CONCAT('%', #{patientName}, '%')
-            </if>
-            <if test="accessionNumber != null and accessionNumber != ''">
-                AND p.accession_number = #{accessionNumber}
-            </if>
-            <if test="startDate != null">
-                AND COALESCE(pi.study_date, p.study_date) <![CDATA[>=]]> #{startDate}
-            </if>
-            <if test="endDate != null">
-                AND COALESCE(pi.study_date, p.study_date) <![CDATA[<=]]> #{endDate}
-            </if>
-        </where>
-    </sql>
-
     <select id="searchStudiesFromCache" resultMap="PacsStudyCacheResultMap">
         SELECT
             p.id,
@@ -90,35 +70,6 @@
         FROM pacs_study_cache p
         <include refid="PacsCacheWhereClause" />
         ORDER BY p.study_date DESC, p.study_time DESC
-        LIMIT 100
-    </select>
-
-    <select id="searchStudiesWithPatientTable" resultMap="PacsStudyCacheResultMap">
-        SELECT
-            p.id,
-            p.study_instance_uid,
-            COALESCE(pi.patient_id, p.patient_id) AS patient_id,
-            COALESCE(pi.patient_name, p.patient_name) AS patient_name,
-            pi.gender AS gender,
-            pi.age AS age,
-            p.accession_number,
-            COALESCE(pi.study_date, p.study_date) AS study_date,
-            p.study_time,
-            p.study_description,
-            p.modality,
-            p.series_count,
-            p.image_count,
-            p.body_part,
-            p.manufacturer,
-            p.model_name,
-            p.image_file_path,
-            pi.image_path AS patient_image_path,
-            p.created_at,
-            p.updated_at
-        FROM pacs_study_cache p
-        LEFT JOIN ${patientTableName} pi ON pi.accession_number = p.accession_number
-        <include refid="PacsPatientTableWhereClause" />
-        ORDER BY COALESCE(pi.study_date, p.study_date) DESC, p.study_time DESC
         LIMIT 100
     </select>
 

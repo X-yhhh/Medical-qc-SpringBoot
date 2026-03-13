@@ -1,6 +1,6 @@
 package com.medical.qc.messaging;
 
-import com.medical.qc.service.MockQualityTaskService;
+import com.medical.qc.modules.qctask.application.MockQualityTaskServiceImpl;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jms.annotation.JmsListener;
 import org.springframework.stereotype.Component;
@@ -11,9 +11,9 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(prefix = "app.messaging.activemq", name = "enabled", havingValue = "true")
 public class MockQualityTaskConsumer {
-    private final MockQualityTaskService mockQualityTaskService;
+    private final MockQualityTaskServiceImpl mockQualityTaskService;
 
-    public MockQualityTaskConsumer(MockQualityTaskService mockQualityTaskService) {
+    public MockQualityTaskConsumer(MockQualityTaskServiceImpl mockQualityTaskService) {
         this.mockQualityTaskService = mockQualityTaskService;
     }
 
@@ -22,3 +22,4 @@ public class MockQualityTaskConsumer {
         mockQualityTaskService.processTask(message);
     }
 }
+

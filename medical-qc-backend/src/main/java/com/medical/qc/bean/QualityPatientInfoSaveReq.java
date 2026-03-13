@@ -72,3 +72,4 @@ public class QualityPatientInfoSaveReq {
         this.remark = remark;
     }
 }
+

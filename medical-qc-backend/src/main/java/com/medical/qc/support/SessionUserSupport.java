@@ -3,8 +3,8 @@ package com.medical.qc.support;
 import com.medical.qc.common.AuthRole;
 import com.medical.qc.common.exception.ForbiddenException;
 import com.medical.qc.common.exception.UnauthorizedException;
-import com.medical.qc.entity.User;
-import com.medical.qc.mapper.UserMapper;
+import com.medical.qc.modules.auth.persistence.entity.User;
+import com.medical.qc.modules.auth.persistence.mapper.UserMapper;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -137,3 +137,4 @@ public class SessionUserSupport {
         return isAdmin(user) ? null : user.getId();
     }
 }
+

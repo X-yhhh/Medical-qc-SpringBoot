@@ -7,7 +7,7 @@ import java.util.Map;
 /**
  * 患者信息管理任务类型支持类。
  *
- * <p>负责统一维护五个质控项的任务类型、中文名称与对应患者信息表名，
+ * <p>负责统一维护五个质控项的任务类型与中文名称，
  * 避免控制层、服务层和 PACS 逻辑重复书写硬编码。</p>
  */
 public final class QualityPatientTaskSupport {
@@ -18,7 +18,6 @@ public final class QualityPatientTaskSupport {
     public static final String TASK_TYPE_CORONARY_CTA = "coronary-cta";
 
     private static final Map<String, String> TASK_LABEL_MAP;
-    private static final Map<String, String> TASK_TABLE_MAP;
 
     static {
         Map<String, String> taskLabelMap = new LinkedHashMap<>();
@@ -28,14 +27,6 @@ public final class QualityPatientTaskSupport {
         taskLabelMap.put(TASK_TYPE_CHEST_CONTRAST, "CT胸部增强患者信息");
         taskLabelMap.put(TASK_TYPE_CORONARY_CTA, "冠脉CTA患者信息");
         TASK_LABEL_MAP = Collections.unmodifiableMap(taskLabelMap);
-
-        Map<String, String> taskTableMap = new LinkedHashMap<>();
-        taskTableMap.put(TASK_TYPE_HEAD, "head_patient_info");
-        taskTableMap.put(TASK_TYPE_HEMORRHAGE, "hemorrhage_patient_info");
-        taskTableMap.put(TASK_TYPE_CHEST_NON_CONTRAST, "chest_non_contrast_patient_info");
-        taskTableMap.put(TASK_TYPE_CHEST_CONTRAST, "chest_contrast_patient_info");
-        taskTableMap.put(TASK_TYPE_CORONARY_CTA, "coronary_cta_patient_info");
-        TASK_TABLE_MAP = Collections.unmodifiableMap(taskTableMap);
     }
 
     private QualityPatientTaskSupport() {
@@ -48,7 +39,7 @@ public final class QualityPatientTaskSupport {
      * @return 是否受支持
      */
     public static boolean isSupportedTaskType(String taskType) {
-        return TASK_TABLE_MAP.containsKey(normalizeTaskType(taskType));
+        return TASK_LABEL_MAP.containsKey(normalizeTaskType(taskType));
     }
 
     /**
@@ -62,16 +53,6 @@ public final class QualityPatientTaskSupport {
     }
 
     /**
-     * 解析任务对应的患者信息表名。
-     *
-     * @param taskType 任务类型
-     * @return 表名；不支持时返回 null
-     */
-    public static String resolveTableName(String taskType) {
-        return TASK_TABLE_MAP.get(normalizeTaskType(taskType));
-    }
-
-    /**
      * 解析任务对应的中文名称。
      *
      * @param taskType 任务类型
@@ -82,3 +63,4 @@ public final class QualityPatientTaskSupport {
         return TASK_LABEL_MAP.getOrDefault(normalizedTaskType, normalizedTaskType);
     }
 }
+

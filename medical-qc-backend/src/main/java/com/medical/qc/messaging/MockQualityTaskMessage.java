@@ -121,3 +121,4 @@ public class MockQualityTaskMessage implements Serializable {
         this.submittedAt = submittedAt;
     }
 }
+
