@@ -31,6 +31,7 @@ const router = useRouter()
  * 返回当前角色的默认首页。
  */
 const goHome = () => {
+  // 已登录但越权时，优先把用户带回该角色的默认入口。
   router.push(resolveDefaultRouteForRole(getCurrentRole()))
 }
 
@@ -38,6 +39,7 @@ const goHome = () => {
  * 清理登录状态并跳转登录页，便于用户切换身份。
  */
 const goLogin = () => {
+  // 403 页面点击“切换账号”时，直接清理本地登录态并进入登录页 switch 模式。
   clearAuthState()
   router.push({ path: '/login', query: { mode: 'switch' } })
 }

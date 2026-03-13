@@ -11,27 +11,39 @@ import java.time.LocalDateTime;
  */
 @TableName("issue_tickets")
 public class UnifiedIssueTicket {
+    // 工单主键。
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+    // 工单编号，对外展示或兼容旧逻辑时使用。
     private String ticketNo;
+    // 来源质控结果主记录 ID。
     private Long resultId;
+    // 来源质控任务 ID。
     private Long taskId;
+    // 患者主数据 ID。
     private Long patientId;
+    // 检查实例 ID。
     private Long studyId;
+    // 异常编码与异常名称。
     private String issueCode;
     private String issueName;
+    // 异常描述、优先级和责任角色。
     private String description;
     private String priority;
     private String responsibleRole;
+    // 当前处理人用户 ID。
     private Long assigneeUserId;
+    // SLA 时限和截止时间。
     private Integer slaHours;
     private LocalDateTime dueAt;
+    // 工单状态、最后备注和时间轴字段。
     private String status;
     private String lastRemark;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime resolvedAt;
 
+    // 以下访问器供 MyBatis、查询服务与控制器序列化复用。
     public Long getId() {
         return id;
     }

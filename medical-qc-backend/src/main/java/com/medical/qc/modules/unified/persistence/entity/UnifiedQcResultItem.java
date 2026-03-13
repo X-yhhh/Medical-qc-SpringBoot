@@ -12,20 +12,26 @@ import java.time.LocalDateTime;
  */
 @TableName("qc_result_items")
 public class UnifiedQcResultItem {
+    // 结果项主键。
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+    // 所属结果主记录 ID。
     private Long resultId;
+    // 项目编码、名称和状态。
     private String itemCode;
     private String itemName;
     private String itemStatus;
+    // 可选评分、阈值与详情内容。
     private BigDecimal score;
     private String thresholdValue;
     private String detailText;
     private String detailJson;
+    // 排序和时间戳。
     private Integer sortOrder;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    // 以下访问器供结果装配、详情查询与前端回显复用。
     public Long getId() {
         return id;
     }

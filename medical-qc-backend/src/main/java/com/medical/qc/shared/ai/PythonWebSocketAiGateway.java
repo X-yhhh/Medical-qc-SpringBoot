@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Component
 public class PythonWebSocketAiGateway implements AiGateway {
+    // Jackson 用于把请求/响应在 JSON 与 Map 之间转换。
     private final ObjectMapper objectMapper;
 
     @Value("${python.model_server.url:ws://localhost:8765}")
@@ -30,6 +31,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
 
     @Override
     public Map<String, Object> analyzeHemorrhage(String imagePath) {
+        // 模型服务地址来自配置，默认连本机 8765 端口。
         URI serverUri;
         try {
             serverUri = new URI(modelServerUrl);
@@ -42,6 +44,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
             port = "wss".equalsIgnoreCase(serverUri.getScheme()) ? 443 : 80;
         }
 
+        // 启动阶段 Python 模型服务可能尚未就绪，因此允许有限次重试。
         int connectAttempts = 6;
         long connectBackoffMs = 1000;
 
@@ -52,6 +55,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
                 client = new WebSocketClient(serverUri) {
                     @Override
                     public void onOpen(ServerHandshake handshakedata) {
+                        // WebSocket 建立后立即发送图片路径请求。
                         Map<String, String> request = new HashMap<>();
                         request.put("image_path", imagePath);
                         try {
@@ -63,6 +67,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
 
                     @Override
                     public void onMessage(String message) {
+                        // 模型服务返回结果后完成 future，并关闭连接。
                         future.complete(message);
                         close();
                     }
@@ -85,6 +90,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
                         return Collections.singletonMap("error",
                                 "Failed to connect to Python Model Server (Port " + port + ")");
                     }
+                    // 短暂退避后继续重试，给 Python 服务留出启动时间。
                     Thread.sleep(connectBackoffMs);
                     continue;
                 }
@@ -92,6 +98,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
                 String resultJson = future.get(60, TimeUnit.SECONDS);
                 return JsonObjectMapReader.read(objectMapper, resultJson);
             } catch (InterruptedException exception) {
+                // 线程被中断时要恢复中断标记，避免吞掉上层取消信号。
                 Thread.currentThread().interrupt();
                 return Collections.singletonMap("error", "Connection interrupted");
             } catch (java.util.concurrent.TimeoutException exception) {
@@ -101,6 +108,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
             } finally {
                 if (client != null) {
                     try {
+                        // 无论成功失败都关闭连接，避免 WebSocket 句柄泄露。
                         client.close();
                     } catch (Exception ignore) {
                     }

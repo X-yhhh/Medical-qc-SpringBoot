@@ -26,6 +26,7 @@ import java.util.Map;
  */
 @Service
 public class QualityServiceImpl {
+    // 异常工单同步调度器，用于把不合格脑出血记录送入异常汇总链路。
     private final HemorrhageIssueSyncDispatcher hemorrhageIssueSyncDispatcher;
     private final ObjectMapper objectMapper;
     private final AiGateway aiGateway;
@@ -50,18 +51,31 @@ public class QualityServiceImpl {
         this.unifiedHemorrhageWriteService = unifiedHemorrhageWriteService;
     }
 
+    /**
+     * 查询历史记录，默认不限制条数。
+     */
     public List<HemorrhageRecord> getHistory(Long userId) {
         return getHistory(userId, null);
     }
 
+    /**
+     * 查询历史记录，并对前端传入的 limit 做保护性归一化。
+     */
     public List<HemorrhageRecord> getHistory(Long userId, Integer limit) {
         return unifiedHemorrhageQueryService.getHistory(userId, normalizeHistoryLimit(limit));
     }
 
+    /**
+     * 查询指定历史记录。
+     */
     public HemorrhageRecord getHistoryRecord(Long userId, Long recordId) {
         return unifiedHemorrhageQueryService.getHistoryRecord(userId, recordId);
     }
 
+    /**
+     * 执行脑出血检测完整链路。
+     * 数据链路：输入预处理 -> AI 推理 -> 结果装配 -> 持久化 -> 异常工单同步 -> 响应前端。
+     */
     public Map<String, Object> processHemorrhage(MultipartFile file,
                                                  User user,
                                                  String patientName,
@@ -71,6 +85,7 @@ public class QualityServiceImpl {
                                                  Integer age,
                                                  LocalDate studyDate,
                                                  String sourceMode) throws IOException {
+        // 统一处理本地上传/PACS 两种输入模式，并补齐患者与设备上下文。
         HemorrhagePreparedContext preparedContext = hemorrhagePreparationService.prepare(
                 file,
                 patientName,
@@ -81,23 +96,28 @@ public class QualityServiceImpl {
                 studyDate,
                 sourceMode);
 
+        // AI 网关只关心待分析图片绝对路径。
         Map<String, Object> predictionResult = aiGateway.analyzeHemorrhage(preparedContext.analysisImagePath());
         if (predictionResult.containsKey("error")) {
             throw hemorrhageResultAssembler.buildModelServiceException(String.valueOf(predictionResult.get("error")));
         }
 
+        // 将推理结果映射为数据库记录实体。
         HemorrhageRecord record = hemorrhageResultAssembler.buildRecord(user, examId, preparedContext, predictionResult);
         record.setPatientImagePath(preparedContext.savedImagePath());
+        // 同时把前端需要的附加字段直接写回响应对象。
         hemorrhageResultAssembler.enrichResponse(predictionResult, record, preparedContext);
         hemorrhageResultAssembler.appendPreview(
                 predictionResult,
                 preparedContext.analysisImagePath(),
                 preparedContext.savedImagePath());
+        // rawResultJson 保存去除大体积 base64 后的结构化原始结果，供历史详情回放。
         record.setRawResultJson(objectMapper.writeValueAsString(
                 hemorrhageResultAssembler.buildPersistedResult(predictionResult)));
         record.setCreatedAt(LocalDateTime.now());
         record.setUpdatedAt(record.getCreatedAt());
 
+        // 将记录写入统一模型，并返回新记录主键。
         Long recordId = unifiedHemorrhageWriteService.persist(
                 user,
                 record,
@@ -106,8 +126,10 @@ public class QualityServiceImpl {
                 preparedContext.analysisImagePath(),
                 preparedContext.savedImagePath());
 
+        // 持久化成功后异步触发异常工单同步。
         hemorrhageIssueSyncDispatcher.dispatch(recordId, user.getId());
 
+        // 继续补充前端页面直接依赖的基础字段。
         predictionResult.put("record_id", recordId);
         predictionResult.put("patient_name", record.getPatientName());
         predictionResult.put("patient_code", record.getPatientCode());
@@ -120,6 +142,9 @@ public class QualityServiceImpl {
         return predictionResult;
     }
 
+    /**
+     * 归一化历史记录条数上限，防止前端传入异常值。
+     */
     private Integer normalizeHistoryLimit(Integer limit) {
         if (limit == null || limit <= 0) {
             return null;

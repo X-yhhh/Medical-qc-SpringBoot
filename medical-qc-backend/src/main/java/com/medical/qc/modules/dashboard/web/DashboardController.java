@@ -16,7 +16,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/dashboard")
 public class DashboardController {
+    // 应用服务负责任务、异常、历史记录的聚合编排。
     private final DashboardApplicationService dashboardApplicationService;
+    // 会话辅助组件负责解析登录用户和权限范围。
     private final SessionUserSupport sessionUserSupport;
 
     public DashboardController(DashboardApplicationService dashboardApplicationService,
@@ -34,6 +36,7 @@ public class DashboardController {
     @GetMapping("/overview")
     public ResponseEntity<?> getOverview(HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 总览数据按当前用户角色决定全局视图或个人视图。
         return ResponseEntity.ok(dashboardApplicationService.getOverview(user));
     }
 
@@ -49,6 +52,7 @@ public class DashboardController {
             @RequestParam(value = "period", defaultValue = "week") String period,
             HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 趋势图同样按当前用户角色收敛查询范围。
         return ResponseEntity.ok(dashboardApplicationService.getTrend(user, period));
     }
 }

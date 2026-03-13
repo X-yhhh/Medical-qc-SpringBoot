@@ -12,50 +12,78 @@ import java.time.LocalDateTime;
  */
 @TableName("qc_results")
 public class UnifiedQcResult {
+    // 结果主键。
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+    // 关联任务 ID 与结果版本。
     private Long taskId;
     private Integer resultVersion;
+    // 模型编码和模型版本。
     private String modelCode;
     private String modelVersion;
+    // 质控结论、质控分和异常数量。
     private String qcStatus;
     private BigDecimal qualityScore;
     private Integer abnormalCount;
+    // 主异常项编码/名称与结果 JSON。
     private String primaryIssueCode;
     private String primaryIssueName;
     private String summaryJson;
     private String rawResultJson;
+    // 创建与更新时间。
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    // 以下访问器供结果写入、工单查询和前端序列化复用。
     public Long getId() {
         return id;
     }
 
+    /**
+     * 设置结果主键。
+     */
     public void setId(Long id) {
         this.id = id;
     }
 
+    /**
+     * 返回任务 ID。
+     */
     public Long getTaskId() {
         return taskId;
     }
 
+    /**
+     * 设置任务 ID。
+     */
     public void setTaskId(Long taskId) {
         this.taskId = taskId;
     }
 
+    /**
+     * 返回结果版本号。
+     */
     public Integer getResultVersion() {
         return resultVersion;
     }
 
+    /**
+     * 设置结果版本号。
+     */
     public void setResultVersion(Integer resultVersion) {
         this.resultVersion = resultVersion;
     }
 
+    /**
+     * 返回模型编码。
+     */
     public String getModelCode() {
         return modelCode;
     }
 
+    /**
+     * 设置模型编码。
+     */
     public void setModelCode(String modelCode) {
         this.modelCode = modelCode;
     }

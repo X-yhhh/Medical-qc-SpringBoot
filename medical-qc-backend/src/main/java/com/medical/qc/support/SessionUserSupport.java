@@ -17,8 +17,10 @@ import java.util.Objects;
  */
 @Component
 public class SessionUserSupport {
+    // 约定 Session 中保存当前登录用户快照的键名。
     private static final String SESSION_USER_KEY = "user";
 
+    // 每次请求都回源数据库校验账号状态，避免 Session 中旧权限长期有效。
     @Autowired
     private UserMapper userMapper;
 
@@ -29,27 +31,32 @@ public class SessionUserSupport {
      * @return 当前登录用户
      */
     public User requireAuthenticatedUser(HttpSession session) {
+        // 先从 Session 中读取登录快照；若没有则说明用户未登录或会话已过期。
         Object sessionUser = session == null ? null : session.getAttribute(SESSION_USER_KEY);
         if (!(sessionUser instanceof User user)) {
             throw new UnauthorizedException("登录状态已失效，请重新登录");
         }
 
+        // Session 中的用户对象必须包含数据库主键，否则无法做后续状态回查。
         if (user.getId() == null) {
             invalidateSession(session);
             throw new UnauthorizedException("登录状态已失效，请重新登录");
         }
 
+        // 每次请求都读取数据库最新状态，确保禁用、删号、改权立即生效。
         User latestUser = userMapper.selectById(user.getId());
         if (latestUser == null || Boolean.FALSE.equals(latestUser.getIsActive())) {
             invalidateSession(session);
             throw new UnauthorizedException("账号状态已变更，请重新登录");
         }
 
+        // 角色或启用状态变化都视为权限变化，需要重新登录刷新前端菜单和后端访问范围。
         if (isPermissionChanged(user, latestUser)) {
             invalidateSession(session);
             throw new UnauthorizedException("账号权限已变更，请重新登录");
         }
 
+        // 用数据库最新快照覆盖 Session，避免后续请求持续携带旧字段。
         session.setAttribute(SESSION_USER_KEY, latestUser);
         return latestUser;
     }
@@ -134,6 +141,7 @@ public class SessionUserSupport {
      * @return 数据范围用户 ID；管理员返回 null
      */
     public Long resolveScopedUserId(User user) {
+        // 管理员查看全局数据时不限制 user_id；医生仅看自己的任务和结果。
         return isAdmin(user) ? null : user.getId();
     }
 }

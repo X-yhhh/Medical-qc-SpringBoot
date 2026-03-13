@@ -123,6 +123,7 @@ const props = defineProps({
   },
 })
 
+// 对外只暴露显示状态同步和选中检查记录两个事件。
 const emit = defineEmits(['update:visible', 'select'])
 
 // 查询表单
@@ -169,6 +170,7 @@ const handleSearch = async () => {
   searched.value = true
 
   try {
+    // 查询参数命名直接对齐后端 /pacs/search 接口。
     const params = {
       task_type: props.taskType || undefined,
       patient_name: searchForm.patientName || undefined,
@@ -179,6 +181,7 @@ const handleSearch = async () => {
     }
 
     const response = await searchPacsStudies(params)
+    // 后端统一返回 { data: [...] } 结构。
     studies.value = response.data || []
 
     if (studies.value.length === 0) {
@@ -196,6 +199,7 @@ const handleSearch = async () => {
  * 重置查询条件
  */
 const handleReset = () => {
+  // 重置后回到“未查询”状态，恢复初始空白提示。
   searchForm.patientName = ''
   searchForm.patientId = ''
   searchForm.accessionNumber = ''
@@ -208,6 +212,7 @@ const handleReset = () => {
  * 选择检查记录
  */
 const handleSelect = (study) => {
+  // 选中后由父页面决定如何回填上传表单和关闭弹窗。
   emit('select', study)
 }
 </script>

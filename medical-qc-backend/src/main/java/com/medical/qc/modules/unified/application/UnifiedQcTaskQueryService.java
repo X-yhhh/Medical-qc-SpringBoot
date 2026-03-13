@@ -29,6 +29,7 @@ import java.util.Objects;
  */
 @Service
 public class UnifiedQcTaskQueryService {
+    // 统一格式化任务列表与详情中的时间字段。
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final UnifiedQcTaskMapper unifiedQcTaskMapper;
@@ -49,6 +50,9 @@ public class UnifiedQcTaskQueryService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 分页查询任务列表。
+     */
     public Map<String, Object> getTaskPage(Long scopedUserId,
                                            int page,
                                            int limit,
@@ -56,10 +60,12 @@ public class UnifiedQcTaskQueryService {
                                            String taskType,
                                            String status,
                                            String sourceMode) {
+        // 先加载满足条件的任务记录，再在内存中按关键字做补充过滤。
         List<QcTaskRecord> taskRecords = loadTaskRecords(scopedUserId, taskType, status, sourceMode).stream()
                 .filter(taskRecord -> matchesQuery(taskRecord, query))
                 .toList();
 
+        // 统一做分页边界保护，避免前端传入极端值。
         int normalizedPage = Math.max(page, 1);
         int normalizedLimit = Math.max(1, Math.min(limit, 50));
         int total = taskRecords.size();
@@ -76,6 +82,9 @@ public class UnifiedQcTaskQueryService {
         return response;
     }
 
+    /**
+     * 查询单个任务详情。
+     */
     public Map<String, Object> getTaskDetail(String taskNo, Long scopedUserId) {
         UnifiedQcTask task = unifiedQcTaskMapper.selectOne(new QueryWrapper<UnifiedQcTask>()
                 .eq("task_no", taskNo)
@@ -87,6 +96,7 @@ public class UnifiedQcTaskQueryService {
             throw new IllegalArgumentException("无权访问该质控任务");
         }
 
+        // 统一把新模型任务实体转换成前端仍在消费的旧视图结构。
         QcTaskRecord taskRecord = unifiedQualityTaskWriteService.toLegacyTaskRecord(task);
         if (taskRecord == null) {
             throw new IllegalArgumentException("质控任务不存在或已过期");
@@ -99,6 +109,7 @@ public class UnifiedQcTaskQueryService {
 
         Map<String, Object> parsedRawResult = parseJson(taskRecord.getResultJson());
         if (parsedRawResult.isEmpty()) {
+            // 若原始结果 JSON 缺失，则退化为根据结果项表拼装一个兜底结构。
             parsedRawResult = buildFallbackResult(taskRecord, result == null ? null : result.getId());
         }
 
@@ -109,10 +120,16 @@ public class UnifiedQcTaskQueryService {
         return response;
     }
 
+    /**
+     * 获取指定范围内的全部任务记录，供仪表盘等聚合场景复用。
+     */
     public List<QcTaskRecord> getTaskRecords(Long scopedUserId) {
         return loadTaskRecords(scopedUserId, null, null, null);
     }
 
+    /**
+     * 按范围和结构化筛选条件加载任务记录。
+     */
     private List<QcTaskRecord> loadTaskRecords(Long scopedUserId,
                                                String taskType,
                                                String status,
@@ -138,6 +155,9 @@ public class UnifiedQcTaskQueryService {
                 .toList();
     }
 
+    /**
+     * 组装任务列表单行数据。
+     */
     private Map<String, Object> toTaskListItem(QcTaskRecord taskRecord) {
         Map<String, Object> item = new HashMap<>();
         item.put("recordId", taskRecord.getId());
@@ -163,6 +183,9 @@ public class UnifiedQcTaskQueryService {
         return item;
     }
 
+    /**
+     * 汇总任务中心顶部摘要数据。
+     */
     private Map<String, Object> buildSummary(List<QcTaskRecord> taskRecords) {
         long pendingTasks = taskRecords.stream().filter(record -> "PENDING".equals(record.getTaskStatus())).count();
         long processingTasks = taskRecords.stream().filter(record -> "PROCESSING".equals(record.getTaskStatus())).count();
@@ -194,6 +217,9 @@ public class UnifiedQcTaskQueryService {
         return summary;
     }
 
+    /**
+     * 当 rawResultJson 缺失时，根据结果项表构造前端可消费的兜底结果。
+     */
     private Map<String, Object> buildFallbackResult(QcTaskRecord taskRecord, Long resultId) {
         List<UnifiedQcResultItem> items = resultId == null
                 ? List.of()
@@ -227,10 +253,16 @@ public class UnifiedQcTaskQueryService {
         return fallback;
     }
 
+    /**
+     * 安全解析原始结果 JSON。
+     */
     private Map<String, Object> parseJson(String rawJson) {
         return JsonObjectMapReader.read(objectMapper, rawJson);
     }
 
+    /**
+     * 关键字查询匹配患者姓名、检查号、任务 ID 和主异常项。
+     */
     private boolean matchesQuery(QcTaskRecord taskRecord, String query) {
         if (!StringUtils.hasText(query)) {
             return true;
@@ -242,10 +274,16 @@ public class UnifiedQcTaskQueryService {
                 || contains(taskRecord.getPrimaryIssue(), normalizedQuery);
     }
 
+    /**
+     * 安全做字符串包含判断。
+     */
     private boolean contains(Object value, String query) {
         return value != null && String.valueOf(value).contains(query);
     }
 
+    /**
+     * 判断任务是否属于成功但异常的记录。
+     */
     private boolean isAbnormalTaskRecord(QcTaskRecord taskRecord) {
         return taskRecord != null
                 && "SUCCESS".equals(taskRecord.getTaskStatus())
@@ -253,14 +291,23 @@ public class UnifiedQcTaskQueryService {
                 || (taskRecord.getAbnormalCount() != null && taskRecord.getAbnormalCount() > 0));
     }
 
+    /**
+     * 把来源模式编码转换为中文展示文案。
+     */
     private String resolveSourceModeLabel(String sourceMode) {
         return "pacs".equals(sourceMode) ? "PACS 调取" : "本地上传";
     }
 
+    /**
+     * 统一格式化时间字段。
+     */
     private String formatDateTime(LocalDateTime value) {
         return value == null ? "--" : value.format(DATE_TIME_FORMATTER);
     }
 
+    /**
+     * 从多个候选文本中返回第一个非空值。
+     */
     private String firstNonBlank(String... values) {
         if (values == null) {
             return null;
@@ -273,6 +320,9 @@ public class UnifiedQcTaskQueryService {
         return null;
     }
 
+    /**
+     * 保留一位小数，供列表摘要展示。
+     */
     private double roundOneDecimal(double value) {
         return Math.round(value * 10.0D) / 10.0D;
     }

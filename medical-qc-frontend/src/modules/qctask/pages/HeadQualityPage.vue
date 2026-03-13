@@ -406,11 +406,13 @@ import { detectHead } from '@/modules/qctask/api/qualityApi'
 import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
 import { buildHeadStaticPacsResult } from '@/utils/staticQualityPacs'
 
+// 上传弹窗校验规则，对齐后端 head 质控任务的最小输入要求。
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
 }
 
+// 当前页面的大部分上传、轮询和结果回填逻辑都复用通用异步质控组合函数。
 const {
   analyzing,
   analyzeProgress,
@@ -436,8 +438,10 @@ const {
   handleReanalyze,
   handleExport,
 } = useAsyncQualityTaskPage({
+  // 指定本页使用的任务提交接口。
   submitTask: detectHead,
   buildStaticPacsResult: buildHeadStaticPacsResult,
+  // 头部平扫页面的默认患者信息结构。
   initialPatientInfo: {
     name: '',
     gender: '',
@@ -449,10 +453,12 @@ const {
     sliceCount: 0,
     sliceThickness: 0,
   },
+  // PACS 演示模式下预填的示例检查号。
   pacsPreset: {
     patientName: '王某某',
     examId: 'PACS_AUTO_20231024',
   },
+  // 头部平扫任务专属的前端进度步骤文案。
   analysisSteps: (form) => [
     { progress: 10, msg: '正在读取 DICOM 文件头信息...', step: 'DICOM 解析' },
     { progress: 30, msg: '校验序列完整性 (240/240 slices)...', step: '完整性校验' },
@@ -468,14 +474,17 @@ const {
   exportMessage: '质控报告已生成并开始下载',
 })
 
+// 异常项数量直接由质控项列表中“不合格”项计数得出。
 const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
 
+// 页面总评分按“合格项占比”计算，作为展示层简化分值。
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
+// 仪表盘颜色随评分档位变化。
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
@@ -502,6 +511,7 @@ const scoreColor = computed(() => {
   margin-bottom: 12px;
 }
 
+/* 页面标题与状态标签。 */
 .page-title {
   margin: 0;
   font-size: 24px;
@@ -536,6 +546,7 @@ const scoreColor = computed(() => {
   flex-direction: column;
 }
 
+/* 分析中的居中布局。 */
 .analyzing-container {
   flex: 1;
   display: flex;
@@ -544,6 +555,7 @@ const scoreColor = computed(() => {
   align-items: center;
 }
 
+/* 上传入口默认态。 */
 .upload-choices {
   flex: 1;
   display: flex;
@@ -642,6 +654,7 @@ const scoreColor = computed(() => {
   gap: 6px;
 }
 
+/* 扫描动画外框。 */
 /* 分析动画样式 */
 .analyzing-container {
   display: flex;
@@ -651,6 +664,7 @@ const scoreColor = computed(() => {
   padding: 20px;
 }
 
+/* 扫描动画圆环。 */
 .scan-animation-box {
   width: 120px;
   height: 120px;
@@ -743,6 +757,7 @@ const scoreColor = computed(() => {
   margin-right: 8px;
 }
 
+/* 2. 结果展示总览区。 */
 /* 2. 结果展示样式 */
 .info-section {
   margin-bottom: 24px;
@@ -815,6 +830,7 @@ const scoreColor = computed(() => {
   color: #606266;
 }
 
+/* 质控项列表与标题区。 */
 /* 质控项详情样式 */
 .section-title {
   margin-bottom: 20px;

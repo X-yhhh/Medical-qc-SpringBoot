@@ -11,6 +11,7 @@
 import axios from 'axios'
 import { clearAuthState } from '@/utils/auth'
 
+// 通过延迟注入拿到路由实例，避免 request.js 与 router/index.js 形成循环依赖。
 let router = null
 
 // 注入路由实例 (避免循环引用)
@@ -44,27 +45,33 @@ instance.interceptors.response.use(
 
   // 失败：统一错误处理
   (error) => {
+    // 某些内部请求会自己处理未登录态，这里允许按请求级别跳过默认跳转。
     const skipAuthRedirect = Boolean(error.config?.skipAuthRedirect)
 
     // 处理 401 Unauthorized (Session 过期或未登录)
     if (error.response?.status === 401) {
+      // 一旦后端判定会话失效，本地缓存必须立即清空，避免菜单和用户信息残留。
       clearAuthState()
 
       if (!skipAuthRedirect) {
+        // 根据后端 detail 细分“会话过期”和“权限/状态变化”两类登录页提示。
         const unauthorizedDetail = error.response?.data?.detail || ''
         const loginMode = unauthorizedDetail.includes('权限已变更') || unauthorizedDetail.includes('账号状态已变更')
           ? 'permission-updated'
           : 'expired'
 
         if (router) {
+          // 优先走路由实例跳转，保持 SPA 状态切换一致。
           router.push(`/login?mode=${loginMode}`)
         } else {
+          // 在应用尚未完成路由注入时，退化到浏览器原生跳转。
           window.location.href = `/login?mode=${loginMode}`
         }
       }
     }
 
     if (error.response?.status === 403) {
+      // 已登录但无权限的请求统一跳转到无权限页。
       if (router) {
         router.push('/forbidden')
       } else {

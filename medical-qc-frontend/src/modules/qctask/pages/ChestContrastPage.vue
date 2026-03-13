@@ -438,8 +438,10 @@ const {
   handleReanalyze,
   handleExport,
 } = useAsyncQualityTaskPage({
+  // 指定本页对应的异步质控接口。
   submitTask: detectChestContrast,
   buildStaticPacsResult: buildChestContrastStaticPacsResult,
+  // 胸部增强页面的患者默认字段。
   initialPatientInfo: {
     name: '',
     gender: '',
@@ -458,6 +460,7 @@ const {
     patientName: '王某某',
     examId: 'PACS_ENH_20231024',
   },
+  // 胸部增强任务专属的进度步骤提示。
   analysisSteps: (form) => [
     { progress: 10, msg: '正在解析增强 CT 序列...', step: 'DICOM 解析' },
     { progress: 30, msg: '校验多时相序列完整性...', step: '完整性校验' },
@@ -473,6 +476,7 @@ const {
   exportMessage: '报告下载链接已生成，正在下载...',
 })
 
+// 增强任务会按期相分组，因此先把原始 qcItems 分拣到各组。
 const groupedQcItems = computed(() => {
   const groups = {
     定位片: [],
@@ -490,6 +494,7 @@ const groupedQcItems = computed(() => {
     }
   })
 
+  // 仅保留有数据的分组，避免界面出现空组标题。
   const result = {}
   Object.keys(groups).forEach((key) => {
     if (groups[key].length > 0) {
@@ -499,14 +504,17 @@ const groupedQcItems = computed(() => {
   return result
 })
 
+// 异常项数量由不合格项直接计数。
 const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
 
+// 总评分按合格项占比换算。
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
+// 仪表盘颜色映射。
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
@@ -534,6 +542,7 @@ const scoreColor = computed(() => {
   margin-bottom: 12px;
 }
 
+/* 页面标题与状态标签。 */
 .page-title {
   margin: 0;
   font-size: 24px;
@@ -568,6 +577,7 @@ const scoreColor = computed(() => {
   flex-direction: column;
 }
 
+/* 分析中的居中布局。 */
 .analyzing-container {
   flex: 1;
   display: flex;
@@ -576,6 +586,7 @@ const scoreColor = computed(() => {
   align-items: center;
 }
 
+/* 上传入口默认态。 */
 .upload-choices {
   flex: 1;
   display: flex;
@@ -674,6 +685,7 @@ const scoreColor = computed(() => {
   gap: 6px;
 }
 
+/* 扫描动画外框。 */
 /* 分析动画样式 */
 .analyzing-container {
   display: flex;
@@ -683,6 +695,7 @@ const scoreColor = computed(() => {
   padding: 20px;
 }
 
+/* 扫描动画圆环。 */
 .scan-animation-box {
   width: 120px;
   height: 120px;
@@ -775,6 +788,7 @@ const scoreColor = computed(() => {
   margin-right: 8px;
 }
 
+/* 2. 结果展示总览区。 */
 /* 2. 结果展示样式 */
 .info-section {
   margin-bottom: 24px;

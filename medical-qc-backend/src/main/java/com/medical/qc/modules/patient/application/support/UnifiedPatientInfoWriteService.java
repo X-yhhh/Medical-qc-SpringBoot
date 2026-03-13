@@ -31,6 +31,7 @@ import java.util.Objects;
  */
 @Service
 public class UnifiedPatientInfoWriteService {
+    // 患者、检查、文件与 PACS 缓存分别由各自 mapper 承担落库。
     private final UnifiedPatientMapper unifiedPatientMapper;
     private final UnifiedStudyMapper unifiedStudyMapper;
     private final UnifiedStudyFileMapper unifiedStudyFileMapper;
@@ -52,6 +53,10 @@ public class UnifiedPatientInfoWriteService {
         this.unifiedPatientInfoQueryService = unifiedPatientInfoQueryService;
     }
 
+    /**
+     * 新增患者信息。
+     * 数据链路：表单校验 -> 图片落盘 -> patient/study upsert -> 查询层回读新记录。
+     */
     public QualityPatientInfo createPatient(String taskType,
                                             QualityPatientInfoSaveReq request,
                                             MultipartFile imageFile) {
@@ -67,6 +72,9 @@ public class UnifiedPatientInfoWriteService {
         return unifiedPatientInfoQueryService.getByStudyId(studyId);
     }
 
+    /**
+     * 更新患者信息。
+     */
     public QualityPatientInfo updatePatient(String taskType,
                                             Long id,
                                             QualityPatientInfoSaveReq request,
@@ -93,10 +101,15 @@ public class UnifiedPatientInfoWriteService {
         String imagePath = imageFile != null && !imageFile.isEmpty()
                 ? patientInfoImageSupport.storeUploadedImage(normalizedTaskType, imageFile, accessionNumber)
                 : existingPatient == null ? null : existingPatient.getImagePath();
+        // 若未上传新图，则沿用已有图片路径。
         Long studyId = upsertPatientAndStudy(normalizedTaskType, request, imagePath, existingStudy);
         return unifiedPatientInfoQueryService.getByStudyId(studyId);
     }
 
+    /**
+     * 删除患者信息。
+     * 删除检查后若该患者已无其他检查，则一并清理患者主记录。
+     */
     public void deletePatient(Long id) {
         if (id == null || id <= 0) {
             throw new IllegalArgumentException("患者信息 ID 非法");
@@ -119,6 +132,10 @@ public class UnifiedPatientInfoWriteService {
         }
     }
 
+    /**
+     * 按检查号幂等新增或更新患者信息。
+     * 供 PACS 同步和其他业务链路复用。
+     */
     public QualityPatientInfo upsertPatientByAccessionNumber(String taskType,
                                                              String patientId,
                                                              String patientName,
@@ -152,6 +169,9 @@ public class UnifiedPatientInfoWriteService {
         return unifiedPatientInfoQueryService.getByStudyId(studyId);
     }
 
+    /**
+     * 从 PACS 缓存批量初始化患者主数据。
+     */
     public Map<String, Object> syncPatientsFromPacs(String taskType) {
         String normalizedTaskType = QualityPatientTaskSupport.normalizeTaskType(taskType);
         List<PacsStudyCache> pacsStudies = pacsStudyMapper.selectStudiesForSync();
@@ -162,6 +182,7 @@ public class UnifiedPatientInfoWriteService {
         int skippedCount = 0;
 
         for (PacsStudyCache pacsStudy : pacsStudies) {
+            // 只同步当前 taskType 关联的检查部位/任务类型。
             if (!patientInfoImageSupport.matchesTaskType(normalizedTaskType, pacsStudy)) {
                 continue;
             }
@@ -183,6 +204,7 @@ public class UnifiedPatientInfoWriteService {
                 continue;
             }
 
+            // 以检查号作为幂等键，已有则更新，不存在则新增。
             QualityPatientInfo existing = unifiedPatientInfoQueryService.getByAccessionNumber(normalizedTaskType, accessionNumber);
             QualityPatientInfo result = upsertPatientByAccessionNumber(
                     normalizedTaskType,
@@ -217,6 +239,9 @@ public class UnifiedPatientInfoWriteService {
         return response;
     }
 
+    /**
+     * 核心 patient/study upsert 逻辑。
+     */
     private Long upsertPatientAndStudy(String taskType,
                                        QualityPatientInfoSaveReq request,
                                        String imagePath,
@@ -225,6 +250,7 @@ public class UnifiedPatientInfoWriteService {
 
         UnifiedPatient patient;
         if (existingStudy != null && existingStudy.getPatientId() != null) {
+            // 编辑场景优先沿用现有 patient 关联，避免误创建新患者。
             patient = unifiedPatientMapper.selectById(existingStudy.getPatientId());
         } else {
             patient = resolveExistingPatient(taskType, request.getPatientId(), accessionNumber);
@@ -235,6 +261,7 @@ public class UnifiedPatientInfoWriteService {
             patient.setPatientNo(buildPatientNo(taskType, request.getPatientId(), accessionNumber));
             patient.setCreatedAt(LocalDateTime.now());
         }
+        // 患者主数据以最后一次维护结果为准。
         patient.setPatientName(normalizeText(request.getPatientName()));
         patient.setGender(normalizeText(request.getGender()));
         patient.setAgeText(request.getAge() == null ? null : String.valueOf(request.getAge()));
@@ -252,6 +279,7 @@ public class UnifiedPatientInfoWriteService {
             study.setStudyNo(buildStudyNo(taskType, accessionNumber));
             study.setCreatedAt(LocalDateTime.now());
         }
+        // Study 承载检查维度信息，与 patient 主数据分离。
         study.setPatientId(patient.getId());
         study.setAccessionNumber(accessionNumber);
         study.setModality(resolveModality(taskType));
@@ -274,6 +302,9 @@ public class UnifiedPatientInfoWriteService {
         return study.getId();
     }
 
+    /**
+     * 按 patient_no 查找已有患者。
+     */
     private UnifiedPatient resolveExistingPatient(String taskType, String patientId, String accessionNumber) {
         String patientNo = buildPatientNo(taskType, patientId, accessionNumber);
         return unifiedPatientMapper.selectOne(new QueryWrapper<UnifiedPatient>()
@@ -281,6 +312,9 @@ public class UnifiedPatientInfoWriteService {
                 .last("LIMIT 1"));
     }
 
+    /**
+     * 新增或更新预览图文件记录。
+     */
     private void upsertPreviewFile(Long studyId, String imagePath) {
         UnifiedStudyFile previewFile = unifiedStudyFileMapper.selectOne(new QueryWrapper<UnifiedStudyFile>()
                 .eq("study_id", studyId)
@@ -305,6 +339,9 @@ public class UnifiedPatientInfoWriteService {
         }
     }
 
+    /**
+     * 校验患者请求体和图片输入。
+     */
     private void validateRequest(QualityPatientInfoSaveReq request,
                                  Long currentId,
                                  MultipartFile imageFile,
@@ -333,10 +370,17 @@ public class UnifiedPatientInfoWriteService {
         patientInfoImageSupport.validateImageFile(imageFile);
     }
 
+    /**
+     * 年龄小于 0 时统一视为非法。
+     */
     private Integer normalizeAge(Integer age) {
         return age == null ? null : (age >= 0 ? age : null);
     }
 
+    /**
+     * 构造 patient_no。
+     * 优先使用外部 patientId，缺失时用 taskType + accessionNumber 合成。
+     */
     private String buildPatientNo(String taskType, String patientId, String accessionNumber) {
         String normalizedPatientId = normalizeText(patientId);
         if (normalizedPatientId != null) {
@@ -345,14 +389,23 @@ public class UnifiedPatientInfoWriteService {
         return "rt-" + QualityPatientTaskSupport.normalizeTaskType(taskType) + "-patient-" + accessionNumber;
     }
 
+    /**
+     * 构造 study_no。
+     */
     private String buildStudyNo(String taskType, String accessionNumber) {
         return "rt-" + QualityPatientTaskSupport.normalizeTaskType(taskType) + "-study-" + accessionNumber;
     }
 
+    /**
+     * 根据任务类型推导模态。
+     */
     private String resolveModality(String taskType) {
         return QualityPatientTaskSupport.TASK_TYPE_CORONARY_CTA.equals(taskType) ? "CTA" : "CT";
     }
 
+    /**
+     * 根据任务类型推导部位。
+     */
     private String resolveBodyPart(String taskType) {
         return switch (QualityPatientTaskSupport.normalizeTaskType(taskType)) {
             case QualityPatientTaskSupport.TASK_TYPE_HEAD, QualityPatientTaskSupport.TASK_TYPE_HEMORRHAGE -> "HEAD";
@@ -362,6 +415,9 @@ public class UnifiedPatientInfoWriteService {
         };
     }
 
+    /**
+     * 从图片路径提取文件名。
+     */
     private String extractFileName(String imagePath) {
         String normalizedPath = normalizeText(imagePath);
         if (normalizedPath == null) {
@@ -372,6 +428,9 @@ public class UnifiedPatientInfoWriteService {
         return lastSlash < 0 ? slashPath : slashPath.substring(lastSlash + 1);
     }
 
+    /**
+     * 把本地路径转换为 publicPath。
+     */
     private String normalizePublicPath(String rawPath) {
         String normalizedPath = normalizeText(rawPath);
         if (normalizedPath == null) {
@@ -387,6 +446,9 @@ public class UnifiedPatientInfoWriteService {
         return slashPath;
     }
 
+    /**
+     * 从多个候选文本中取第一个非空值。
+     */
     private String firstNonBlank(String... values) {
         if (values == null) {
             return null;
@@ -400,6 +462,9 @@ public class UnifiedPatientInfoWriteService {
         return null;
     }
 
+    /**
+     * 去空格并把空字符串转为 null。
+     */
     private String normalizeText(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }

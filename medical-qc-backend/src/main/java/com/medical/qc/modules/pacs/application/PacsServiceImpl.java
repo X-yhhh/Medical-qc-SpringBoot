@@ -16,7 +16,9 @@ import java.util.List;
  */
 @Service
 public class PacsServiceImpl {
+    // 当前 PACS 检索仍基于缓存表实现，后续可替换为真实 PACS 适配器。
     private final PacsStudyMapper pacsStudyMapper;
+    // 查询统一患者主数据，用于把已维护的患者信息补回 PACS 列表。
     private final UnifiedPatientInfoQueryService unifiedPatientInfoQueryService;
 
     public PacsServiceImpl(PacsStudyMapper pacsStudyMapper,
@@ -42,6 +44,7 @@ public class PacsServiceImpl {
                                               String patientName,
                                               String accessionNumber, LocalDate startDate,
                                               LocalDate endDate) {
+        // 先查缓存表，再把统一患者主数据中的补录字段覆写到结果里。
         List<PacsStudyCache> studies = pacsStudyMapper.searchStudiesFromCache(
                 normalizeText(patientId),
                 normalizeText(patientName),
@@ -52,11 +55,15 @@ public class PacsServiceImpl {
         return studies;
     }
 
+    /**
+     * 用统一患者主数据补齐 PACS 记录中的患者信息与预览图。
+     */
     private void enrichFromUnifiedPatientInfo(String taskType, PacsStudyCache study) {
         if (study == null || !StringUtils.hasText(study.getAccessionNumber())) {
             return;
         }
 
+        // 检查号是 PACS 记录与统一患者档案的主关联键。
         var patientInfo = unifiedPatientInfoQueryService.getByAccessionNumber(taskType, study.getAccessionNumber());
         if (patientInfo == null) {
             return;

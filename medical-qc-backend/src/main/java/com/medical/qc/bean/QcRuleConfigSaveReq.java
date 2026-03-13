@@ -4,16 +4,26 @@ package com.medical.qc.bean;
  * 质控规则保存请求。
  */
 public class QcRuleConfigSaveReq {
+    // 模块编码，如 hemorrhage/head/chest-contrast。
     private String taskType;
+    // 模块展示名，可由前端显式传入，也可后端自动推导。
     private String taskTypeName;
+    // 异常项名称；DEFAULT 表示兜底规则。
     private String issueType;
+    // 工单优先级：高/中/低。
     private String priority;
+    // 责任角色：doctor/admin。
     private String responsibleRole;
+    // SLA 处理时限，单位小时。
     private Integer slaHours;
+    // 是否在命中规则时自动建单。
     private Boolean autoCreateIssue;
+    // 规则启停状态。
     private Boolean enabled;
+    // 规则说明。
     private String description;
 
+    // 以下访问器供规则中心表单与后端服务校验复用。
     public String getTaskType() {
         return taskType;
     }

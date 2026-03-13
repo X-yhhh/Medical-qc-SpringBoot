@@ -16,8 +16,10 @@ import org.springframework.util.StringUtils;
 @Primary
 @ConditionalOnBean(JmsTemplate.class)
 public class SpringJmsMessageBus implements MessageBus {
+    // 统一记录 ActiveMQ 发送失败的情况，供降级逻辑和排查使用。
     private static final Logger logger = LoggerFactory.getLogger(SpringJmsMessageBus.class);
 
+    // 底层发送能力由 Spring JMS 模板提供。
     private final JmsTemplate jmsTemplate;
 
     public SpringJmsMessageBus(JmsTemplate jmsTemplate) {
@@ -31,6 +33,7 @@ public class SpringJmsMessageBus implements MessageBus {
         }
 
         try {
+            // 发送成功后返回 true，调用方据此决定是否需要本地降级执行。
             jmsTemplate.convertAndSend(destination, payload);
             return true;
         } catch (JmsException exception) {

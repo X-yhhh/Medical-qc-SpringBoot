@@ -8,14 +8,22 @@ import java.time.LocalDate;
  * <p>供患者信息管理页面与脑出血检测自动同步逻辑复用。</p>
  */
 public class QualityPatientInfoSaveReq {
+    // 患者 ID，可来自人工录入或 PACS 回填。
     private String patientId;
+    // 患者姓名，是患者档案的核心展示字段。
     private String patientName;
+    // 检查号，作为检查级主键和去重依据。
     private String accessionNumber;
+    // 性别信息。
     private String gender;
+    // 年龄，前端按整数输入，后端最终转成年龄文本保存。
     private Integer age;
+    // 检查日期。
     private LocalDate studyDate;
+    // 备注信息，可承载业务说明或补充上下文。
     private String remark;
 
+    // 以下访问器供患者管理页面和自动回填逻辑共用。
     public String getPatientId() {
         return patientId;
     }

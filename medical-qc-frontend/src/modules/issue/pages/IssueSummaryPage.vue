@@ -442,17 +442,24 @@ const ROOT_CAUSE_OPTIONS = [
 ]
 
 // --- 基础状态 ---
+// 顶部更新时间用于提示用户当前看板数据的刷新时刻。
 const updateTime = ref(dayjs().format('YYYY-MM-DD HH:mm'))
+// 列表加载态，覆盖表格和弹窗内详情加载之外的主区域请求。
 const loading = ref(false)
+// 趋势图时间范围切换值，直接映射后端 days 参数。
 const trendRange = ref('7') // 趋势图时间范围: '7' | '30'
+// 模糊查询关键字，可匹配患者姓名和检查号。
 const searchQuery = ref('') // 列表搜索关键词
+// 状态筛选值，与工单状态枚举保持一致。
 const filterStatus = ref('') // 列表状态筛选
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
+// 表格行数据直接来自 getRecentIssues 返回的 items。
 const tableData = ref([])
 
 // --- 统计卡片数据 ---
+// statsData 是顶部四张统计卡片的原始数据源，接口刷新后整体回填。
 const statsData = ref({
   totalIssues: 0,
   todayIssues: 0,
@@ -472,6 +479,7 @@ const statsCards = computed(() => [
   { title: '处理解决率', value: statsData.value.resolutionRate, unit: '%', icon: 'CircleCheck', trend: statsData.value.resolutionRateTrend, type: 'success' },
 ])
 
+// 详情弹窗中不同来源类型共用 currentRow，以下计算属性负责拆出子视图需要的数据片段。
 const currentSourceDetail = computed(() => currentRow.value?.sourceDetail || null)
 const isHemorrhageSourceDetail = computed(() => currentSourceDetail.value?.detailType === 'hemorrhage')
 const qualityTaskPatientInfo = computed(() => currentSourceDetail.value?.patientInfo || {})
@@ -480,9 +488,12 @@ const currentHandleLogs = computed(() => (Array.isArray(currentRow.value?.handle
 const detailImageUrl = computed(() => currentSourceDetail.value?.imageUrl || currentRow.value?.imageUrl || '')
 
 // --- 弹窗相关状态 ---
+// 弹窗开关和当前选中行共同决定详情区域渲染内容。
 const dialogVisible = ref(false)
 const currentRow = ref(null)
+// 可分派人员在页面初始化时拉取一次，供所有工单复用。
 const assignableUsers = ref([])
+// workflowForm 对应详情弹窗中的状态、指派人和 CAPA 表单。
 const workflowForm = ref(createDefaultWorkflowForm())
 const submitting = ref(false)
 const detailLoading = ref(false)
@@ -494,6 +505,7 @@ let trendChart = null
 let pieChart = null
 
 function createDefaultWorkflowForm() {
+  // 每次打开新工单时都重置为默认表单，避免上一次编辑内容残留。
   return {
     status: '待处理',
     remark: '',
@@ -508,11 +520,13 @@ function createDefaultWorkflowForm() {
 
 // --- 生命周期 ---
 onMounted(async () => {
+  // 首屏并发拉取统计、图表、列表和指派人，减少页面可交互等待时间。
   await Promise.all([loadAllData(), loadAssignableUsers()])
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
+  // 页面销毁时清理事件监听和 ECharts 实例，避免重复初始化导致的内存泄漏。
   window.removeEventListener('resize', handleResize)
   trendChart?.dispose()
   pieChart?.dispose()
@@ -529,6 +543,7 @@ const loadAllData = async () => {
     fetchDistribution(),
     fetchList()
   ])
+  // 所有核心数据刷新完成后统一更新页面时间戳。
   updateTime.value = dayjs().format('YYYY-MM-DD HH:mm')
 }
 
@@ -584,6 +599,7 @@ const fetchDistribution = async () => {
 const loadAssignableUsers = async () => {
   try {
     const response = await getAssignableUsers()
+    // 接口异常时回退到空数组，避免 el-select 渲染时报错。
     assignableUsers.value = Array.isArray(response) ? response : []
   } catch (error) {
     console.error('获取可分派人员失败', error)
@@ -607,11 +623,13 @@ const fetchList = async () => {
     if (res && Array.isArray(res.items)) {
       const totalPages = Number(res.pages || 0)
       if (totalPages > 0 && currentPage.value > totalPages) {
+        // 过滤条件变化后当前页可能越界，此时回退到最后一页重新查询。
         currentPage.value = totalPages
         await fetchList()
         return
       }
 
+      // 新分页接口返回 items + total + page，表格和分页器都按该结构回填。
       tableData.value = res.items
       total.value = Number(res.total || res.items.length)
       currentPage.value = Number(res.page || currentPage.value)
@@ -620,6 +638,7 @@ const fetchList = async () => {
     }
 
     if (Array.isArray(res)) {
+      // 兼容旧接口直接返回数组的情况。
       tableData.value = res
       total.value = res.length
       updateTime.value = dayjs().format('YYYY-MM-DD HH:mm')
@@ -642,6 +661,7 @@ const fetchList = async () => {
  * 处理列表搜索/筛选
  */
 const handleSearch = () => {
+  // 新查询必须回到第一页，否则可能留在一个已经不存在的页码上。
   currentPage.value = 1
   fetchList()
 }
@@ -687,6 +707,7 @@ const handleExport = async () => {
       return
     }
 
+    // 直接在前端拼装 CSV，保持导出和当前筛选条件一致。
     const headers = ['异常ID', '发现时间', '患者姓名', '检查编号', '检查类型', '主异常项', '异常描述', '优先级', '责任角色', 'SLA截止', '状态']
     const csvRows = exportRows.map(row => [
       row.id,
@@ -702,6 +723,7 @@ const handleExport = async () => {
       row.status,
     ].map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))
 
+    // 通过 Blob + a 标签触发浏览器下载，不依赖后端单独导出接口。
     const csvContent = ['\uFEFF' + headers.join(','), ...csvRows].join('\n')
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = window.URL.createObjectURL(blob)

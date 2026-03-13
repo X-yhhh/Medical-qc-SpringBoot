@@ -1,3 +1,4 @@
+// 组装患者管理页的公共 meta，供同一个页面组件复用不同 taskType 配置。
 const buildPatientRouteMeta = (taskType, pageTitle, pageDescription, workflowConnected) => ({
   requiresAuth: true,
   roles: ['doctor', 'admin'],
@@ -7,8 +8,10 @@ const buildPatientRouteMeta = (taskType, pageTitle, pageDescription, workflowCon
   workflowConnected,
 })
 
+// 五类患者信息管理路由都复用同一页面组件，通过 meta 区分业务类型和文案。
 export const patientRoutes = [
   {
+    // CT 头部平扫患者管理。
     path: '/patient-info/head',
     component: () => import('@/modules/patient/pages/QualityPatientManagementPage.vue'),
     meta: buildPatientRouteMeta(
@@ -19,6 +22,7 @@ export const patientRoutes = [
     ),
   },
   {
+    // 头部出血检测患者管理，已与真实检测流程联动。
     path: '/patient-info/hemorrhage',
     component: () => import('@/modules/patient/pages/QualityPatientManagementPage.vue'),
     meta: buildPatientRouteMeta(
@@ -29,6 +33,7 @@ export const patientRoutes = [
     ),
   },
   {
+    // CT 胸部平扫患者管理。
     path: '/patient-info/chest-non-contrast',
     component: () => import('@/modules/patient/pages/QualityPatientManagementPage.vue'),
     meta: buildPatientRouteMeta(
@@ -39,6 +44,7 @@ export const patientRoutes = [
     ),
   },
   {
+    // CT 胸部增强患者管理。
     path: '/patient-info/chest-contrast',
     component: () => import('@/modules/patient/pages/QualityPatientManagementPage.vue'),
     meta: buildPatientRouteMeta(
@@ -49,6 +55,7 @@ export const patientRoutes = [
     ),
   },
   {
+    // 冠脉 CTA 患者管理。
     path: '/patient-info/coronary-cta',
     component: () => import('@/modules/patient/pages/QualityPatientManagementPage.vue'),
     meta: buildPatientRouteMeta(

@@ -30,6 +30,7 @@ import java.util.function.Predicate;
  */
 @Component
 public class DashboardReadSupport {
+    // 时间格式分别服务于活动流、最近访问和趋势图横轴。
     private static final DateTimeFormatter ACTIVITY_TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final DateTimeFormatter RECENT_TIME_FORMATTER = DateTimeFormatter.ofPattern("MM-dd HH:mm");
     private static final DateTimeFormatter TREND_DATE_FORMATTER = DateTimeFormatter.ofPattern("MM-dd");
@@ -40,16 +41,23 @@ public class DashboardReadSupport {
         this.unifiedQcTaskQueryService = unifiedQcTaskQueryService;
     }
 
+    /**
+     * 解析当前用户的数据访问范围。
+     */
     public Long resolveScopedUserId(User user) {
         return AuthRole.ADMIN.matchesRoleId(user.getRoleId()) ? null : user.getId();
     }
 
+    /**
+     * 构建首页总览数据。
+     */
     public Map<String, Object> buildOverview(User user,
                                              List<HemorrhageRecord> hemorrhageHistory,
                                              List<QcTaskRecord> qualityTasks,
                                              long pendingTaskCount,
                                              List<Map<String, Object>> riskList,
                                              long highRiskCount) {
+        // 总览卡片以“今天 vs 昨天”为对比维度，便于页面直接展示趋势百分比。
         LocalDate today = LocalDate.now();
         LocalDate yesterday = today.minusDays(1);
 
@@ -88,9 +96,13 @@ public class DashboardReadSupport {
         return response;
     }
 
+    /**
+     * 构建趋势图数据。
+     */
     public Map<String, Object> buildTrend(String period,
                                           List<HemorrhageRecord> hemorrhageHistory,
                                           List<QcTaskRecord> qualityTasks) {
+        // 周视图显示 7 天，月视图显示 30 天。
         int days = "month".equalsIgnoreCase(period) ? 30 : 7;
         LocalDate startDate = LocalDate.now().minusDays(days - 1L);
 
@@ -165,10 +177,16 @@ public class DashboardReadSupport {
         return response;
     }
 
+    /**
+     * 获取异步质控任务列表。
+     */
     public List<QcTaskRecord> listQualityTasks(Long scopedUserId) {
         return unifiedQcTaskQueryService.getTaskRecords(scopedUserId);
     }
 
+    /**
+     * 组装首页统计卡片。
+     */
     private List<Map<String, Object>> buildStats(long todayTotal,
                                                  long yesterdayTotal,
                                                  long todayQualified,
@@ -189,6 +207,9 @@ public class DashboardReadSupport {
         return stats;
     }
 
+    /**
+     * 构造单张统计卡片数据。
+     */
     private Map<String, Object> buildStatItem(String title,
                                               Object value,
                                               String unit,
@@ -205,6 +226,9 @@ public class DashboardReadSupport {
         return item;
     }
 
+    /**
+     * 组装待办活动流。
+     */
     private List<Map<String, Object>> buildActivities(List<HemorrhageRecord> hemorrhageHistory,
                                                       List<QcTaskRecord> qualityTasks) {
         List<DashboardEvent> dashboardEvents = new ArrayList<>();
@@ -224,6 +248,9 @@ public class DashboardReadSupport {
                 .toList();
     }
 
+    /**
+     * 组装最近访问区。
+     */
     private List<Map<String, Object>> buildRecentVisits(List<HemorrhageRecord> hemorrhageHistory,
                                                         List<QcTaskRecord> qualityTasks) {
         List<DashboardVisit> dashboardVisits = new ArrayList<>();
@@ -243,6 +270,9 @@ public class DashboardReadSupport {
                 .toList();
     }
 
+    /**
+     * 将脑出血记录转换为活动流事件。
+     */
     private DashboardEvent toHemorrhageEvent(HemorrhageRecord record) {
         LocalDateTime occurredAt = record == null ? null : record.getCreatedAt();
         String patientName = normalizePatientName(record == null ? null : record.getPatientName());
@@ -254,6 +284,10 @@ public class DashboardReadSupport {
                 resolveHemorrhageEventColor(record));
     }
 
+    /**
+     * 将异步质控任务转换为活动流事件。
+     * 失败任务显示失败原因，成功任务显示主异常项。
+     */
     private DashboardEvent toTaskEvent(QcTaskRecord taskRecord) {
         if (taskRecord == null) {
             return null;
@@ -287,6 +321,9 @@ public class DashboardReadSupport {
                 resolveTaskEventColor(taskRecord));
     }
 
+    /**
+     * 将 DashboardEvent 投影为前端活动流项。
+     */
     private Map<String, Object> toActivityItem(DashboardEvent event) {
         Map<String, Object> item = new HashMap<>();
         item.put("content", event.content());
@@ -296,6 +333,9 @@ public class DashboardReadSupport {
         return item;
     }
 
+    /**
+     * 将脑出血记录转换为最近访问项。
+     */
     private DashboardVisit toHemorrhageVisit(HemorrhageRecord record) {
         String tag = isQualifiedHemorrhageRecord(record) ? "合格" : "不合格";
         return new DashboardVisit(
@@ -310,6 +350,9 @@ public class DashboardReadSupport {
                 record == null || record.getId() == null ? null : Map.of("recordId", record.getId()));
     }
 
+    /**
+     * 将异步质控任务转换为最近访问项。
+     */
     private DashboardVisit toTaskVisit(QcTaskRecord taskRecord) {
         if (taskRecord == null) {
             return null;
@@ -344,6 +387,9 @@ public class DashboardReadSupport {
                 StringUtils.hasText(taskRecord.getTaskId()) ? Map.of("taskId", taskRecord.getTaskId()) : null);
     }
 
+    /**
+     * 将 DashboardVisit 投影为前端最近访问项。
+     */
     private Map<String, Object> toVisitItem(DashboardVisit visit) {
         Map<String, Object> item = new HashMap<>();
         item.put("id", visit.id());
@@ -358,6 +404,9 @@ public class DashboardReadSupport {
         return item;
     }
 
+    /**
+     * 统计指定日期内的脑出血检测数量。
+     */
     private long countHemorrhageByDate(List<HemorrhageRecord> hemorrhageHistory,
                                        LocalDate targetDate,
                                        Predicate<HemorrhageRecord> predicate) {
@@ -368,6 +417,9 @@ public class DashboardReadSupport {
                 .count();
     }
 
+    /**
+     * 统计指定日期内的异步质控任务数量。
+     */
     private long countTaskByDate(List<QcTaskRecord> qualityTasks,
                                  LocalDate targetDate,
                                  Predicate<QcTaskRecord> predicate) {
@@ -378,6 +430,10 @@ public class DashboardReadSupport {
                 .count();
     }
 
+    /**
+     * 计算指定日期的平均质控分。
+     * 这里会把脑出血记录和异步质控任务统一折算成分值样本。
+     */
     private double calculateAverageScore(List<HemorrhageRecord> hemorrhageHistory,
                                          List<QcTaskRecord> qualityTasks,
                                          LocalDate targetDate) {
@@ -401,6 +457,9 @@ public class DashboardReadSupport {
         return roundOneDecimal(scores.stream().mapToDouble(Double::doubleValue).average().orElse(0D));
     }
 
+    /**
+     * 将脑出血记录折算为首页展示用的质控分。
+     */
     private double calculateHemorrhageScore(HemorrhageRecord record) {
         String primaryIssue = normalizePrimaryIssue(record == null ? null : record.getPrimaryIssue());
         if (!isAbnormalHemorrhageRecord(record)) {
@@ -418,6 +477,9 @@ public class DashboardReadSupport {
         return 90D;
     }
 
+    /**
+     * 计算当前值相对上一周期的涨跌百分比。
+     */
     private double calculateTrend(double currentValue, double previousValue) {
         if (previousValue == 0D) {
             return currentValue == 0D ? 0D : 100D;
@@ -425,34 +487,55 @@ public class DashboardReadSupport {
         return roundOneDecimal((currentValue - previousValue) * 100.0D / previousValue);
     }
 
+    /**
+     * 判断脑出血记录是否异常。
+     */
     private boolean isAbnormalHemorrhageRecord(HemorrhageRecord record) {
         return HemorrhageIssueSupport.isAbnormalRecord(record);
     }
 
+    /**
+     * 判断脑出血记录是否合格。
+     */
     private boolean isQualifiedHemorrhageRecord(HemorrhageRecord record) {
         return HemorrhageIssueSupport.isQualifiedRecord(record);
     }
 
+    /**
+     * 判断异步质控任务是否成功完成。
+     */
     private boolean isSuccessfulQualityTask(QcTaskRecord taskRecord) {
         return taskRecord != null && "SUCCESS".equals(taskRecord.getTaskStatus());
     }
 
+    /**
+     * 判断异步质控任务是否执行失败。
+     */
     private boolean isFailedQualityTask(QcTaskRecord taskRecord) {
         return taskRecord != null && "FAILED".equals(taskRecord.getTaskStatus());
     }
 
+    /**
+     * 判断异步质控任务是否属于合格结果。
+     */
     private boolean isQualifiedQualityTask(QcTaskRecord taskRecord) {
         return isSuccessfulQualityTask(taskRecord)
                 && "合格".equals(taskRecord.getQcStatus())
                 && (taskRecord.getAbnormalCount() == null || taskRecord.getAbnormalCount() == 0);
     }
 
+    /**
+     * 判断异步质控任务是否属于异常结果。
+     */
     private boolean isAbnormalQualityTask(QcTaskRecord taskRecord) {
         return isSuccessfulQualityTask(taskRecord)
                 && ("不合格".equals(taskRecord.getQcStatus())
                 || (taskRecord.getAbnormalCount() != null && taskRecord.getAbnormalCount() > 0));
     }
 
+    /**
+     * 解析首页欢迎名称。
+     */
     private String resolveDisplayName(User user) {
         if (user.getFullName() != null && !user.getFullName().isBlank()) {
             return user.getFullName();
@@ -460,10 +543,16 @@ public class DashboardReadSupport {
         return user.getUsername();
     }
 
+    /**
+     * 解析首页视角模式：admin 或 doctor。
+     */
     private String resolveViewMode(User user) {
         return AuthRole.ADMIN.matchesRoleId(user.getRoleId()) ? "admin" : "doctor";
     }
 
+    /**
+     * 解析脑出血活动流事件类型。
+     */
     private String resolveHemorrhageEventType(HemorrhageRecord record) {
         if (!isAbnormalHemorrhageRecord(record)) {
             return "success";
@@ -474,6 +563,9 @@ public class DashboardReadSupport {
         return "warning";
     }
 
+    /**
+     * 解析脑出血活动流颜色。
+     */
     private String resolveHemorrhageEventColor(HemorrhageRecord record) {
         if (!isAbnormalHemorrhageRecord(record)) {
             return "#67C23A";
@@ -484,14 +576,23 @@ public class DashboardReadSupport {
         return "#E6A23C";
     }
 
+    /**
+     * 解析异步质控任务活动流类型。
+     */
     private String resolveTaskEventType(QcTaskRecord taskRecord) {
         return isAbnormalQualityTask(taskRecord) ? "danger" : "success";
     }
 
+    /**
+     * 解析异步质控任务活动流颜色。
+     */
     private String resolveTaskEventColor(QcTaskRecord taskRecord) {
         return isAbnormalQualityTask(taskRecord) ? "#F56C6C" : "#67C23A";
     }
 
+    /**
+     * 将标签文案映射为前端颜色类型。
+     */
     private String resolveVisitType(String tag) {
         if ("不合格".equals(tag) || "失败".equals(tag)) {
             return "danger";
@@ -502,6 +603,9 @@ public class DashboardReadSupport {
         return "info";
     }
 
+    /**
+     * 解析任务展示名称。
+     */
     private String resolveTaskLabel(QcTaskRecord taskRecord) {
         if (StringUtils.hasText(taskRecord.getTaskTypeName())) {
             return taskRecord.getTaskTypeName().trim();

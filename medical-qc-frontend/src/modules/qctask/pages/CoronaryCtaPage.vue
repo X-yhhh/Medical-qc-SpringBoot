@@ -418,8 +418,10 @@ const {
   handleReanalyze,
   handleExport,
 } = useAsyncQualityTaskPage({
+  // 指定本页对应的异步质控接口。
   submitTask: detectCoronaryCTA,
   buildStaticPacsResult: buildCoronaryCtaStaticPacsResult,
+  // 冠脉 CTA 页面默认患者和采集参数结构。
   initialPatientInfo: {
     name: '',
     gender: '',
@@ -438,6 +440,7 @@ const {
     patientName: '张某某',
     examId: 'PACS_CTA_20231024',
   },
+  // 冠脉 CTA 特有的进度步骤提示。
   analysisSteps: (form) => [
     { progress: 10, msg: '正在解析冠脉 CTA 序列...', step: 'DICOM 解析' },
     { progress: 30, msg: '校验 ECG 门控与序列完整性...', step: '完整性校验' },
@@ -453,14 +456,17 @@ const {
   exportMessage: '质控报告已生成并开始下载',
 })
 
+// 异常项数量由不合格项直接计数。
 const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
 
+// 总评分按合格项占比换算。
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
+// 仪表盘颜色映射。
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
@@ -488,6 +494,7 @@ const scoreColor = computed(() => {
   margin-bottom: 12px;
 }
 
+/* 页面标题与状态标签。 */
 .page-title {
   margin: 0;
   font-size: 24px;
@@ -522,6 +529,7 @@ const scoreColor = computed(() => {
   flex-direction: column;
 }
 
+/* 分析中的居中布局。 */
 .analyzing-container {
   flex: 1;
   display: flex;
@@ -530,6 +538,7 @@ const scoreColor = computed(() => {
   align-items: center;
 }
 
+/* 上传入口默认态。 */
 .upload-choices {
   flex: 1;
   display: flex;
@@ -628,6 +637,7 @@ const scoreColor = computed(() => {
   gap: 6px;
 }
 
+/* 扫描动画外框。 */
 /* 分析动画样式 */
 .analyzing-container {
   display: flex;
@@ -637,6 +647,7 @@ const scoreColor = computed(() => {
   padding: 20px;
 }
 
+/* 扫描动画圆环。 */
 .scan-animation-box {
   width: 120px;
   height: 120px;
@@ -750,6 +761,7 @@ const scoreColor = computed(() => {
   }
 }
 
+/* 2. 结果展示总览区。 */
 /* 2. 结果区域样式 */
 .result-section {
   animation: fade-in 0.5s ease;
@@ -820,6 +832,7 @@ const scoreColor = computed(() => {
 }
 
 /* 列表模式的质控项 */
+/* 质控项列表与标题区。 */
 .qc-items-section {
   background: #fff;
   border-radius: 8px;

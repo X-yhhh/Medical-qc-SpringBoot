@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
  */
 @Service
 public class UnifiedPatientInfoQueryService {
+    // 统一患者、检查和预览图分别来自三张表。
     private final UnifiedPatientMapper unifiedPatientMapper;
     private final UnifiedStudyMapper unifiedStudyMapper;
     private final UnifiedStudyFileMapper unifiedStudyFileMapper;
@@ -39,6 +40,10 @@ public class UnifiedPatientInfoQueryService {
         this.unifiedStudyFileMapper = unifiedStudyFileMapper;
     }
 
+    /**
+     * 分页查询患者列表。
+     * 数据链路：taskType -> studies 范围过滤 -> patients 条件过滤 -> preview 文件补齐 -> QualityPatientInfo 列表。
+     */
     public Map<String, Object> getPatientPage(String taskType,
                                               String keyword,
                                               String patientId,
@@ -46,6 +51,7 @@ public class UnifiedPatientInfoQueryService {
                                               String accessionNumber,
                                               Integer page,
                                               Integer limit) {
+        // 先归一化 taskType 与分页参数，避免前端传入异常值。
         String normalizedTaskType = QualityPatientTaskSupport.normalizeTaskType(taskType);
         int normalizedPage = page == null || page <= 0 ? 1 : page;
         int normalizedLimit = limit == null || limit <= 0 ? 10 : Math.min(limit, 50);
@@ -65,6 +71,7 @@ public class UnifiedPatientInfoQueryService {
                 .filter(patient -> matchesPatient(patient, keyword, patientId, patientName))
                 .collect(Collectors.toMap(UnifiedPatient::getId, patient -> patient));
 
+        // 最终列表按检查日期倒序，日期相同时再按主键倒序稳定排序。
         List<UnifiedStudy> filteredStudies = scopedStudies.stream()
                 .filter(study -> patientMap.containsKey(study.getPatientId()))
                 .sorted((left, right) -> {
@@ -99,6 +106,9 @@ public class UnifiedPatientInfoQueryService {
         return buildResponse(normalizedTaskType, normalizedPage, normalizedLimit, data, total);
     }
 
+    /**
+     * 根据检查号查询患者信息。
+     */
     public QualityPatientInfo getByAccessionNumber(String taskType, String accessionNumber) {
         String normalizedAccessionNumber = normalizeText(accessionNumber);
         if (normalizedAccessionNumber == null) {
@@ -118,6 +128,9 @@ public class UnifiedPatientInfoQueryService {
         return toPatientInfo(patient, study, previewFile);
     }
 
+    /**
+     * 根据 studyId 查询患者信息。
+     */
     public QualityPatientInfo getByStudyId(Long studyId) {
         if (studyId == null) {
             return null;
@@ -133,6 +146,9 @@ public class UnifiedPatientInfoQueryService {
         return toPatientInfo(patient, study, previewFile);
     }
 
+    /**
+     * 根据 taskType 限定 studies 范围。
+     */
     private List<UnifiedStudy> listStudiesByTaskType(String taskType) {
         QueryWrapper<UnifiedStudy> queryWrapper = new QueryWrapper<>();
         switch (taskType) {
@@ -157,6 +173,9 @@ public class UnifiedPatientInfoQueryService {
         return unifiedStudyMapper.selectList(queryWrapper);
     }
 
+    /**
+     * 加载指定 studies 的主预览图。
+     */
     private Map<Long, UnifiedStudyFile> loadPrimaryPreviewFiles(List<Long> studyIds) {
         if (studyIds == null || studyIds.isEmpty()) {
             return Map.of();
@@ -174,6 +193,9 @@ public class UnifiedPatientInfoQueryService {
                         (left, right) -> Boolean.TRUE.equals(left.getIsPrimary()) ? left : right));
     }
 
+    /**
+     * 患者维度筛选：关键字、患者 ID、患者姓名。
+     */
     private boolean matchesPatient(UnifiedPatient patient,
                                    String keyword,
                                    String patientId,
@@ -198,11 +220,17 @@ public class UnifiedPatientInfoQueryService {
         return normalizedPatientName == null || contains(patient.getPatientName(), normalizedPatientName);
     }
 
+    /**
+     * 检查维度筛选：检查号。
+     */
     private boolean matchesStudy(UnifiedStudy study, String accessionNumber) {
         String normalizedAccessionNumber = normalizeText(accessionNumber);
         return normalizedAccessionNumber == null || normalizedAccessionNumber.equals(study.getAccessionNumber());
     }
 
+    /**
+     * 把统一模型三张表的数据映射为旧前端仍在使用的 QualityPatientInfo。
+     */
     private QualityPatientInfo toPatientInfo(UnifiedPatient patient,
                                              UnifiedStudy study,
                                              UnifiedStudyFile previewFile) {
@@ -221,6 +249,9 @@ public class UnifiedPatientInfoQueryService {
         return item;
     }
 
+    /**
+     * 构造空列表响应。
+     */
     private Map<String, Object> buildResponse(String taskType,
                                               int page,
                                               int limit,
@@ -228,6 +259,9 @@ public class UnifiedPatientInfoQueryService {
         return buildResponse(taskType, page, limit, data, 0);
     }
 
+    /**
+     * 构造分页响应。
+     */
     private Map<String, Object> buildResponse(String taskType,
                                               int page,
                                               int limit,
@@ -250,6 +284,9 @@ public class UnifiedPatientInfoQueryService {
         return response;
     }
 
+    /**
+     * 将年龄文本安全转回整数。
+     */
     private Integer parseAge(String ageText) {
         String normalizedAgeText = normalizeText(ageText);
         if (normalizedAgeText == null) {
@@ -262,10 +299,16 @@ public class UnifiedPatientInfoQueryService {
         }
     }
 
+    /**
+     * 安全做包含判断。
+     */
     private boolean contains(String value, String keyword) {
         return value != null && value.contains(keyword);
     }
 
+    /**
+     * 从多个候选文本中取第一个非空值。
+     */
     private String firstNonBlank(String... values) {
         if (values == null) {
             return null;
@@ -279,6 +322,9 @@ public class UnifiedPatientInfoQueryService {
         return null;
     }
 
+    /**
+     * 去空格并把空字符串转为 null。
+     */
     private String normalizeText(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }

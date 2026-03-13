@@ -162,6 +162,7 @@ import { ElMessage } from 'element-plus'
 import { createAdminQcRule, getAdminQcRules, updateAdminQcRule } from '@/modules/admin-user/api/adminUserApi'
 import { ROLE_OPTIONS } from '@/utils/auth'
 
+// 模块类型选项与后端规则配置中的 taskType 保持一致。
 const TASK_TYPE_OPTIONS = [
   { value: 'hemorrhage', label: '头部出血检测' },
   { value: 'head', label: 'CT头部平扫质控' },
@@ -170,6 +171,7 @@ const TASK_TYPE_OPTIONS = [
   { value: 'coronary-cta', label: '冠脉CTA质控' },
 ]
 
+// 列表加载态、提交态和弹窗状态。
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
@@ -177,18 +179,21 @@ const formRef = ref(null)
 const editingId = ref(null)
 const tableData = ref([])
 
+// 顶部筛选项直接传给规则分页接口。
 const filters = ref({
   keyword: '',
   taskType: '',
   enabled: undefined,
 })
 
+// 分页状态与后端分页结构对应。
 const pagination = ref({
   page: 1,
   limit: 10,
   total: 0,
 })
 
+// 顶部规则统计摘要。
 const summary = ref({
   totalRules: 0,
   enabledRules: 0,
@@ -197,6 +202,7 @@ const summary = ref({
   averageSlaHours: 0,
 })
 
+// 新增/编辑表单默认值。
 const createDefaultForm = () => ({
   taskType: 'head',
   issueType: '',
@@ -208,6 +214,7 @@ const createDefaultForm = () => ({
   description: '',
 })
 
+// 当前编辑表单对象。
 const editForm = ref(createDefaultForm())
 
 const rules = {
@@ -219,6 +226,7 @@ const rules = {
 
 const dialogTitle = computed(() => (editingId.value ? '编辑规则' : '新增规则'))
 
+// 顶部统计卡片直接根据 summary 派生展示结构。
 const summaryCards = computed(() => [
   {
     label: '规则总数',
@@ -250,6 +258,7 @@ const summaryCards = computed(() => [
   },
 ])
 
+// 加载规则列表与统计摘要。
 const loadRules = async () => {
   loading.value = true
   try {
@@ -261,6 +270,7 @@ const loadRules = async () => {
       enabled: filters.value.enabled,
     })
 
+    // 分页接口返回 items + total + summary，页面分别回填表格、分页器和统计卡片。
     tableData.value = Array.isArray(response?.items) ? response.items : []
     pagination.value.total = Number(response?.total || 0)
     pagination.value.page = Number(response?.page || pagination.value.page)
@@ -274,11 +284,13 @@ const loadRules = async () => {
   }
 }
 
+// 查询时统一回到第一页。
 const handleSearch = () => {
   pagination.value.page = 1
   loadRules()
 }
 
+// 清空全部筛选项。
 const resetFilters = () => {
   filters.value = {
     keyword: '',
@@ -288,23 +300,27 @@ const resetFilters = () => {
   handleSearch()
 }
 
+// 翻页后重新拉取列表。
 const handlePageChange = (page) => {
   pagination.value.page = page
   loadRules()
 }
 
+// 修改分页大小后回到第一页。
 const handlePageSizeChange = (size) => {
   pagination.value.limit = size
   pagination.value.page = 1
   loadRules()
 }
 
+// 打开新增规则弹窗。
 const openCreateDialog = () => {
   editingId.value = null
   editForm.value = createDefaultForm()
   dialogVisible.value = true
 }
 
+// 打开编辑弹窗，并把当前行数据回填到表单。
 const openEditDialog = (row) => {
   editingId.value = row.id
   editForm.value = {
@@ -320,10 +336,12 @@ const openEditDialog = (row) => {
   dialogVisible.value = true
 }
 
+// 保存规则；若有 editingId 则更新，否则新增。
 const handleSubmit = async () => {
   await formRef.value.validate()
   submitting.value = true
   try {
+    // 直接提交表单结构，字段名与后端 QcRuleConfigSaveReq 保持一致。
     const payload = { ...editForm.value }
     if (editingId.value) {
       await updateAdminQcRule(editingId.value, payload)
@@ -344,17 +362,20 @@ const handleSubmit = async () => {
 }
 
 onMounted(() => {
+  // 页面进入时先加载规则列表。
   loadRules()
 })
 </script>
 
 <style scoped>
+/* 页面整体容器。 */
 .qc-rule-page {
   min-height: calc(100vh - 60px);
   padding: 24px;
   background: #f5f7fa;
 }
 
+/* 顶部标题区。 */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -384,10 +405,12 @@ onMounted(() => {
   gap: 12px;
 }
 
+/* 统计卡片行。 */
 .summary-row {
   margin-bottom: 20px;
 }
 
+/* 统计卡片、筛选卡片和表格卡片共用外观。 */
 .summary-card,
 .filter-card,
 .table-card {
@@ -399,12 +422,14 @@ onMounted(() => {
     0 3px 10px rgba(15, 23, 42, 0.04);
 }
 
+/* 统计卡片内部布局。 */
 .summary-card :deep(.el-card__body) {
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
+/* 卡片左侧图标块。 */
 .summary-icon {
   display: flex;
   align-items: center;
@@ -435,6 +460,7 @@ onMounted(() => {
   background: rgba(245, 108, 108, 0.12);
 }
 
+/* 卡片文案区。 */
 .summary-label {
   font-size: 14px;
   color: #909399;
@@ -453,6 +479,7 @@ onMounted(() => {
   color: #909399;
 }
 
+/* 顶部筛选工具栏。 */
 .filter-card {
   margin-bottom: 20px;
 }
@@ -472,6 +499,7 @@ onMounted(() => {
   width: 320px;
 }
 
+/* 表格头部。 */
 .card-header {
   display: flex;
   align-items: center;
@@ -489,6 +517,7 @@ onMounted(() => {
   font-size: 13px;
 }
 
+/* 分页区域。 */
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;

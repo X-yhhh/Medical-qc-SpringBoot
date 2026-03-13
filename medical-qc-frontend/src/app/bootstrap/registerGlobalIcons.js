@@ -36,7 +36,9 @@ import {
   WarningFilled,
 } from '@element-plus/icons-vue'
 
+// 当前项目中会被模板直接使用的 Element Plus 图标统一放在这里注册。
 const GLOBAL_ICONS = {
+  // 质控任务、检测和页面状态相关图标。
   Aim,
   Avatar,
   Bell,
@@ -74,8 +76,10 @@ const GLOBAL_ICONS = {
   WarningFilled,
 }
 
+// 遍历图标映射表并注册为全局组件，避免页面逐个导入。
 export const registerGlobalIcons = (app) => {
   for (const [name, component] of Object.entries(GLOBAL_ICONS)) {
+    // 注册后可在任意模板中直接用 <House /> 这类标签引用。
     app.component(name, component)
   }
 }

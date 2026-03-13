@@ -27,7 +27,9 @@ import java.util.Map;
 @RequestMapping("/api/v1/patient-info")
 public class QualityPatientInfoController {
 
+    // 应用服务负责编排患者分页、保存和 PACS 同步流程。
     private final PatientInfoApplicationService patientInfoApplicationService;
+    // 会话用户辅助组件用于校验登录态和角色。
     private final SessionUserSupport sessionUserSupport;
 
     public QualityPatientInfoController(PatientInfoApplicationService patientInfoApplicationService,
@@ -49,6 +51,7 @@ public class QualityPatientInfoController {
                                             @RequestParam(value = "limit", required = false) Integer limit,
                                             HttpSession session) {
         requireAuthenticatedOperator(session);
+        // 前端筛选项全部封装为查询对象，避免控制器层拼接分页逻辑。
         Map<String, Object> response = patientInfoApplicationService.getPatientPage(
                 new PatientInfoPageQuery(
                         taskType,
@@ -77,6 +80,7 @@ public class QualityPatientInfoController {
                                            @RequestParam(value = "image_file", required = false) MultipartFile imageFile,
                                            HttpSession session) {
         requireAuthenticatedOperator(session);
+        // multipart 表单中的文本字段和图片在这里汇总为统一保存命令。
         QualityPatientInfo createdPatient = patientInfoApplicationService.createPatient(
                 new PatientInfoSaveCommand(
                         taskType,
@@ -103,6 +107,7 @@ public class QualityPatientInfoController {
                                            @RequestParam(value = "image_file", required = false) MultipartFile imageFile,
                                            HttpSession session) {
         requireAuthenticatedOperator(session);
+        // 编辑场景显式带上记录 ID，写服务会据此执行更新而不是新增。
         QualityPatientInfo updatedPatient = patientInfoApplicationService.updatePatient(
                 new PatientInfoSaveCommand(
                         taskType,
@@ -140,6 +145,7 @@ public class QualityPatientInfoController {
      */
     private User requireAuthenticatedOperator(HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 患者信息管理目前允许医生和管理员访问，其他角色统一拦截。
         if (!sessionUserSupport.isAdmin(user) && !sessionUserSupport.isDoctor(user)) {
             throw new IllegalArgumentException("当前账号无权访问患者信息管理功能");
         }
@@ -156,6 +162,7 @@ public class QualityPatientInfoController {
                                                        Integer age,
                                                        LocalDate studyDate,
                                                        String remark) {
+        // 保存请求体同时供手工录入和自动同步逻辑复用。
         QualityPatientInfoSaveReq request = new QualityPatientInfoSaveReq();
         request.setPatientId(patientId);
         request.setPatientName(patientName);

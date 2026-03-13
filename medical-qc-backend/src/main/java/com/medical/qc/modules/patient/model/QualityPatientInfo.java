@@ -11,20 +11,26 @@ import java.time.LocalDateTime;
  * 通过动态表名映射复用于不同质控项的患者信息 CRUD。</p>
  */
 public class QualityPatientInfo implements Serializable {
+    // 兼容模型序列化版本号。
     private static final long serialVersionUID = 1L;
 
+    // 记录主键。
     private Long id;
+    // 患者基础信息。
     private String patientId;
     private String patientName;
     private String accessionNumber;
     private String gender;
     private Integer age;
     private LocalDate studyDate;
+    // 预览图和备注。
     private String imagePath;
     private String remark;
+    // 创建与更新时间。
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    // 以下访问器供患者列表、PACS 补齐和表单回显复用。
     public Long getId() {
         return id;
     }

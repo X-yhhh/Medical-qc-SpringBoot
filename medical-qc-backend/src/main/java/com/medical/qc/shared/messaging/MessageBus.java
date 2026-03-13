@@ -7,6 +7,7 @@ public interface MessageBus {
 
     /**
      * 发送消息。
+     * 数据链路：业务服务 -> MessageBus -> JMS / Noop 实现 -> 成功返回 true，失败返回 false 供上层降级。
      *
      * @param destination 目标地址
      * @param payload 消息体

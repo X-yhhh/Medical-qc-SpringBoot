@@ -35,8 +35,10 @@ import java.util.Map;
  */
 @Service
 public class UnifiedQualityTaskWriteService {
+    // 统一记录 JSON 读写失败等非阻断型问题。
     private static final Logger logger = LoggerFactory.getLogger(UnifiedQualityTaskWriteService.class);
 
+    // Study 上下文服务负责患者、检查和文件的主数据联动。
     private final UnifiedStudyContextService unifiedStudyContextService;
     private final UnifiedQcTaskMapper unifiedQcTaskMapper;
     private final UnifiedQcResultMapper unifiedQcResultMapper;
@@ -61,11 +63,16 @@ public class UnifiedQualityTaskWriteService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 持久化刚提交的异步任务。
+     * 数据链路：MockQualityTaskSnapshot -> studies / study_files / qc_tasks。
+     */
     public void persistSubmittedTask(MockQualityTaskSnapshot snapshot) {
         if (snapshot == null) {
             return;
         }
 
+        // requestedAt 用于任务中心的提交时间展示，也是后续状态推进的时间基线。
         LocalDateTime submittedAt = firstNonNull(snapshot.getSubmittedAt(), LocalDateTime.now());
         UnifiedStudy study = unifiedStudyContextService.ensureStudy(
                 snapshot.getTaskType(),
@@ -81,6 +88,7 @@ public class UnifiedQualityTaskWriteService {
                 null);
 
         if (StringUtils.hasText(snapshot.getStoredFilePath())) {
+            // 本地上传的原始文件挂在 SOURCE 角色下，供详情页和后续处理复用。
             unifiedStudyContextService.upsertStudyFile(
                     study.getId(),
                     "SOURCE",
@@ -92,6 +100,7 @@ public class UnifiedQualityTaskWriteService {
                     true);
         }
 
+        // 提交阶段先只落任务主记录，结果表会在任务执行完成后补写。
         UnifiedQcTask task = new UnifiedQcTask();
         task.setTaskNo(snapshot.getTaskId());
         task.setTaskTypeCode(snapshot.getTaskType());
@@ -108,12 +117,17 @@ public class UnifiedQualityTaskWriteService {
         snapshot.setRecordId(task.getId());
     }
 
+    /**
+     * 根据任务执行快照同步任务状态和结果。
+     * 数据链路：运行中快照 -> qc_tasks 更新 -> qc_results / qc_result_items 更新。
+     */
     public void syncTask(MockQualityTaskSnapshot snapshot) {
         UnifiedQcTask task = resolveTask(snapshot);
         if (task == null || snapshot == null) {
             return;
         }
 
+        // 先更新任务主记录状态，保证轮询任务详情时能及时看到状态变化。
         task.setTaskTypeCode(snapshot.getTaskType());
         task.setSourceMode(firstNonBlank(normalizeText(snapshot.getSourceMode()), task.getSourceMode(), "local"));
         task.setTaskStatus(snapshot.getStatus());
@@ -130,17 +144,19 @@ public class UnifiedQualityTaskWriteService {
             return;
         }
 
+        // result_version 当前固定为 1，后续若支持重复分析可扩展版本号。
         UnifiedQcResult result = unifiedQcResultMapper.selectOne(new QueryWrapper<UnifiedQcResult>()
                 .eq("task_id", task.getId())
                 .eq("result_version", 1)
                 .last("LIMIT 1"));
         if (result == null) {
             result = new UnifiedQcResult();
-            result.setTaskId(task.getId());
-            result.setResultVersion(1);
-            result.setCreatedAt(firstNonNull(snapshot.getCompletedAt(), snapshot.getSubmittedAt(), LocalDateTime.now()));
+        result.setTaskId(task.getId());
+        result.setResultVersion(1);
+        result.setCreatedAt(firstNonNull(snapshot.getCompletedAt(), snapshot.getSubmittedAt(), LocalDateTime.now()));
         }
 
+        // 把 mock 结果中的质量结论、评分和主异常项抽取到结构化字段。
         result.setModelCode(snapshot.getTaskType());
         result.setModelVersion("mock");
         result.setQcStatus(MockQualityAnalysisSupport.resolveQcStatus(snapshot.getResult()));
@@ -164,9 +180,14 @@ public class UnifiedQualityTaskWriteService {
             unifiedQcResultMapper.updateById(result);
         }
 
+        // 明细项采取“先删后插”的简化策略，保持和最新结果完全一致。
         replaceResultItems(result.getId(), buildResultItems(snapshot.getResult()));
     }
 
+    /**
+     * 从数据库恢复运行期快照。
+     * 主要用于消息消费端或服务重启后继续处理任务。
+     */
     public MockQualityTaskSnapshot loadSnapshot(String taskNo) {
         String normalizedTaskNo = normalizeText(taskNo);
         if (normalizedTaskNo == null) {
@@ -192,6 +213,7 @@ public class UnifiedQualityTaskWriteService {
                 .eq("result_version", 1)
                 .last("LIMIT 1"));
 
+        // 用数据库中的统一模型记录重建前端和执行层都能识别的快照对象。
         MockQualityTaskSnapshot snapshot = new MockQualityTaskSnapshot();
         snapshot.setRecordId(task.getId());
         snapshot.setTaskId(task.getTaskNo());
@@ -215,11 +237,16 @@ public class UnifiedQualityTaskWriteService {
         return snapshot;
     }
 
+    /**
+     * 将统一模型任务实体转换为旧的 QcTaskRecord 视图。
+     * 当前前端和部分服务仍依赖该结构，因此这里承担兼容层职责。
+     */
     public QcTaskRecord toLegacyTaskRecord(UnifiedQcTask task) {
         if (task == null) {
             return null;
         }
 
+        // 任务详情需要同时拼上 study、patient、source file 和 result 信息。
         UnifiedStudy study = task.getStudyId() == null ? null : unifiedStudyMapper.selectById(task.getStudyId());
         UnifiedPatient patient = study == null || study.getPatientId() == null
                 ? null
@@ -261,6 +288,9 @@ public class UnifiedQualityTaskWriteService {
         return taskRecord;
     }
 
+    /**
+     * 根据快照中的 recordId 或 taskId 定位统一任务实体。
+     */
     private UnifiedQcTask resolveTask(MockQualityTaskSnapshot snapshot) {
         if (snapshot == null) {
             return null;
@@ -287,6 +317,9 @@ public class UnifiedQualityTaskWriteService {
         return task;
     }
 
+    /**
+     * 用最新结果项替换旧的结果项明细。
+     */
     private void replaceResultItems(Long resultId, List<UnifiedQcResultItem> items) {
         unifiedQcResultItemMapper.delete(new QueryWrapper<UnifiedQcResultItem>().eq("result_id", resultId));
         for (UnifiedQcResultItem item : items) {
@@ -295,10 +328,14 @@ public class UnifiedQualityTaskWriteService {
         }
     }
 
+    /**
+     * 从结果 JSON 中构建结构化结果项列表。
+     */
     private List<UnifiedQcResultItem> buildResultItems(Map<String, Object> result) {
         List<UnifiedQcResultItem> items = new ArrayList<>();
         int sortOrder = 10;
         for (Map<String, Object> qcItem : MockQualityAnalysisSupport.extractQcItems(result)) {
+            // 每个质控项以 10 为步长排序，便于后续插入额外项。
             UnifiedQcResultItem item = new UnifiedQcResultItem();
             item.setItemCode("QC_ITEM_" + sortOrder);
             item.setItemName(String.valueOf(qcItem.getOrDefault("name", "质控项")));
@@ -315,6 +352,7 @@ public class UnifiedQualityTaskWriteService {
             return items;
         }
 
+        // 若结果中没有显式 qcItems，则退化为仅保留主异常项。
         UnifiedQcResultItem fallbackItem = new UnifiedQcResultItem();
         String primaryIssue = MockQualityAnalysisSupport.resolvePrimaryIssue(result);
         fallbackItem.setItemCode("PRIMARY_ISSUE");
@@ -328,6 +366,9 @@ public class UnifiedQualityTaskWriteService {
         return List.of(fallbackItem);
     }
 
+    /**
+     * 安全解析 rawResultJson。
+     */
     private Map<String, Object> parseJson(String rawJson) {
         if (!StringUtils.hasText(rawJson)) {
             return Map.of();
@@ -342,6 +383,9 @@ public class UnifiedQualityTaskWriteService {
         }
     }
 
+    /**
+     * 安全序列化结果对象。
+     */
     private String writeJson(Object payload) {
         if (payload == null) {
             return null;
@@ -355,10 +399,16 @@ public class UnifiedQualityTaskWriteService {
         }
     }
 
+    /**
+     * 根据来源模式推导 Study.source_type。
+     */
     private String resolveSourceType(String sourceMode) {
         return MockQualityAnalysisSupport.SOURCE_MODE_PACS.equals(sourceMode) ? "PACS" : "MANUAL";
     }
 
+    /**
+     * 从多个候选值中取第一个非 null 值。
+     */
     @SafeVarargs
     private final <T> T firstNonNull(T... values) {
         if (values == null) {
@@ -372,6 +422,9 @@ public class UnifiedQualityTaskWriteService {
         return null;
     }
 
+    /**
+     * 从多个候选文本中取第一个非空字符串。
+     */
     private String firstNonBlank(String... values) {
         if (values == null) {
             return null;
@@ -384,10 +437,16 @@ public class UnifiedQualityTaskWriteService {
         return null;
     }
 
+    /**
+     * 去空格并把空字符串转为 null。
+     */
     private String normalizeText(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
+    /**
+     * 保留一位小数，供评分字段展示。
+     */
     private double roundOneDecimal(double value) {
         return Math.round(value * 10.0D) / 10.0D;
     }

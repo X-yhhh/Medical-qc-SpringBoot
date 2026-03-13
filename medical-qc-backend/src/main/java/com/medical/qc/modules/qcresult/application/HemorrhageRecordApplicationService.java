@@ -16,20 +16,30 @@ import java.util.Map;
  */
 @Service
 public class HemorrhageRecordApplicationService {
+    // 旧有脑出血业务逻辑集中在 QualityServiceImpl，这里作为应用层入口进行隔离。
     private final QualityServiceImpl qualityService;
 
     public HemorrhageRecordApplicationService(QualityServiceImpl qualityService) {
         this.qualityService = qualityService;
     }
 
+    /**
+     * 查询脑出血检测历史。
+     */
     public List<HemorrhageRecord> getHistory(Long userId, Integer limit) {
         return qualityService.getHistory(userId, limit);
     }
 
+    /**
+     * 查询单条脑出血检测历史详情。
+     */
     public HemorrhageRecord getHistoryDetail(Long userId, Long recordId) {
         return qualityService.getHistoryRecord(userId, recordId);
     }
 
+    /**
+     * 执行脑出血检测。
+     */
     public Map<String, Object> analyzeHemorrhage(HemorrhageAnalysisCommand command) throws IOException {
         return qualityService.processHemorrhage(
                 command.file(),

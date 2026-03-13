@@ -13,53 +13,82 @@ import java.time.LocalTime;
  */
 @TableName("studies")
 public class UnifiedStudy {
+    // 检查主键。
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+    // 统一检查编号。
     private String studyNo;
+    // 所属患者主数据 ID。
     private Long patientId;
+    // Accession Number / Study UID 等检查标识。
     private String accessionNumber;
     private String studyInstanceUid;
+    // 模态、部位与检查日期时间。
     private String modality;
     private String bodyPart;
     private LocalDate studyDate;
     private LocalTime studyTime;
+    // 检查描述、来源和设备信息。
     private String studyDescription;
     private String sourceType;
     private String sourceRef;
     private String manufacturer;
     private String deviceModel;
+    // 状态与时间戳。
     private String status;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    // 以下访问器供主数据读写和查询服务复用。
     public Long getId() {
         return id;
     }
 
+    /**
+     * 设置检查主键。
+     */
     public void setId(Long id) {
         this.id = id;
     }
 
+    /**
+     * 返回统一检查编号。
+     */
     public String getStudyNo() {
         return studyNo;
     }
 
+    /**
+     * 设置统一检查编号。
+     */
     public void setStudyNo(String studyNo) {
         this.studyNo = studyNo;
     }
 
+    /**
+     * 返回患者主数据 ID。
+     */
     public Long getPatientId() {
         return patientId;
     }
 
+    /**
+     * 设置患者主数据 ID。
+     */
     public void setPatientId(Long patientId) {
         this.patientId = patientId;
     }
 
+    /**
+     * 返回检查号。
+     */
     public String getAccessionNumber() {
         return accessionNumber;
     }
 
+    /**
+     * 设置检查号。
+     */
     public void setAccessionNumber(String accessionNumber) {
         this.accessionNumber = accessionNumber;
     }

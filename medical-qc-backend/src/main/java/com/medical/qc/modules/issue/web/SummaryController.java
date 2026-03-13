@@ -27,7 +27,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/summary")
 public class SummaryController {
+    // 应用服务负责读写编排，控制器只承接 HTTP 参数和会话上下文。
     private final IssueSummaryApplicationService issueSummaryApplicationService;
+    // 会话用户辅助组件负责校验登录态并计算数据访问范围。
     private final SessionUserSupport sessionUserSupport;
 
     public SummaryController(IssueSummaryApplicationService issueSummaryApplicationService,
@@ -45,6 +47,7 @@ public class SummaryController {
     @GetMapping("/stats")
     public ResponseEntity<?> getSummaryStats(HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 医生只看自己提交的任务异常，管理员查看全局统计。
         return ResponseEntity.ok(issueSummaryApplicationService.getSummaryStats(
                 sessionUserSupport.resolveScopedUserId(user)));
     }
@@ -61,6 +64,7 @@ public class SummaryController {
             @RequestParam(value = "days", defaultValue = "7") int days,
             HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 趋势图沿用同一 scopedUserId 过滤逻辑，避免统计与列表口径不一致。
         return ResponseEntity.ok(issueSummaryApplicationService.getIssueTrend(
                 sessionUserSupport.resolveScopedUserId(user),
                 days));
@@ -88,6 +92,7 @@ public class SummaryController {
     @GetMapping("/operators")
     public ResponseEntity<?> getAssignableUsers(HttpSession session) {
         sessionUserSupport.requireAuthenticatedUser(session);
+        // 可分派人员是全局启用账号列表，不受当前用户数据范围限制。
         return ResponseEntity.ok(issueSummaryApplicationService.getAssignableUsers());
     }
 
@@ -109,6 +114,7 @@ public class SummaryController {
             @RequestParam(value = "status", required = false) String status,
             HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 把分页和筛选参数封装为查询对象，便于应用层保持入参稳定。
         return ResponseEntity.ok(issueSummaryApplicationService.getIssuePage(
                 new IssuePageQuery(
                         sessionUserSupport.resolveScopedUserId(user),
@@ -149,6 +155,7 @@ public class SummaryController {
             @RequestBody(required = false) Map<String, String> requestBody,
             HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // status 和 remark 来自详情弹窗或列表快捷处理按钮。
         String status = requestBody == null ? null : requestBody.get("status");
         String remark = requestBody == null ? null : requestBody.get("remark");
 
@@ -174,6 +181,7 @@ public class SummaryController {
                                                  @RequestBody(required = false) IssueWorkflowUpdateReq requestBody,
                                                  HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
+        // 工作流更新会同时携带状态、处理人和 CAPA 字段，因此直接透传完整请求对象。
         return ResponseEntity.ok(issueSummaryApplicationService.updateIssueWorkflow(
                 new IssueWorkflowUpdateCommand(
                         sessionUserSupport.resolveScopedUserId(user),

@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  */
 @Service
 public class UnifiedHemorrhageQueryService {
+    // 统一任务、结果、检查和患者五张表共同组成脑出血历史查询视图。
     private final UnifiedQcTaskMapper unifiedQcTaskMapper;
     private final UnifiedQcResultMapper unifiedQcResultMapper;
     private final UnifiedStudyMapper unifiedStudyMapper;
@@ -53,12 +54,16 @@ public class UnifiedHemorrhageQueryService {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 查询脑出血历史列表。
+     */
     public List<HemorrhageRecord> getHistory(Long userId, Integer limit) {
         QueryWrapper<UnifiedQcTask> queryWrapper = new QueryWrapper<UnifiedQcTask>()
                 .eq("task_type_code", "hemorrhage")
                 .orderByDesc("requested_at")
                 .orderByDesc("created_at");
         if (userId != null) {
+            // 医生视角仅返回本人提交的脑出血检测记录。
             queryWrapper.eq("submitted_by", userId);
         }
 
@@ -74,6 +79,9 @@ public class UnifiedHemorrhageQueryService {
         return new ArrayList<>(records.subList(0, limit));
     }
 
+    /**
+     * 按 legacy recordId 查询单条历史记录。
+     */
     public HemorrhageRecord getHistoryRecord(Long userId, Long legacyRecordId) {
         if (legacyRecordId == null) {
             return null;
@@ -96,6 +104,9 @@ public class UnifiedHemorrhageQueryService {
         return toHemorrhageRecord(task);
     }
 
+    /**
+     * 把统一模型任务实体转换为兼容旧前端结构的 HemorrhageRecord。
+     */
     private HemorrhageRecord toHemorrhageRecord(UnifiedQcTask task) {
         if (task == null) {
             return null;
@@ -140,6 +151,9 @@ public class UnifiedHemorrhageQueryService {
         return record;
     }
 
+    /**
+     * 加载检查关联文件并按 file_role 建索引。
+     */
     private Map<String, UnifiedStudyFile> loadStudyFiles(Long studyId) {
         if (studyId == null) {
             return Map.of();
@@ -150,10 +164,16 @@ public class UnifiedHemorrhageQueryService {
                 .collect(Collectors.toMap(UnifiedStudyFile::getFileRole, item -> item, (left, right) -> left));
     }
 
+    /**
+     * 安全解析 rawResultJson。
+     */
     private Map<String, Object> parseJson(String rawJson) {
         return JsonObjectMapReader.read(objectMapper, rawJson);
     }
 
+    /**
+     * 从统一任务编号中解析旧的历史 recordId。
+     */
     private Long extractLegacyId(String taskNo) {
         if (!StringUtils.hasText(taskNo)) {
             return null;
@@ -166,6 +186,9 @@ public class UnifiedHemorrhageQueryService {
         }
     }
 
+    /**
+     * 优先从 rawResult 中读取 prediction，缺失时再根据主异常项推断。
+     */
     private String resolvePrediction(Map<String, Object> rawResult, UnifiedQcResult result) {
         String prediction = asString(rawResult.get("prediction"));
         if (StringUtils.hasText(prediction)) {
@@ -175,6 +198,9 @@ public class UnifiedHemorrhageQueryService {
         return StringUtils.hasText(primaryIssue) && primaryIssue.contains("脑出血") ? "出血" : "未出血";
     }
 
+    /**
+     * 优先返回文件 publicPath，缺失时回退到 filePath。
+     */
     private String resolveFilePath(UnifiedStudyFile primary, UnifiedStudyFile fallback) {
         String primaryPath = primary == null ? null : firstNonBlank(primary.getPublicPath(), primary.getFilePath());
         if (primaryPath != null) {
@@ -183,6 +209,9 @@ public class UnifiedHemorrhageQueryService {
         return fallback == null ? null : firstNonBlank(fallback.getPublicPath(), fallback.getFilePath());
     }
 
+    /**
+     * 将年龄文本转为整数。
+     */
     private Integer parseAge(String ageText) {
         if (!StringUtils.hasText(ageText)) {
             return null;
@@ -194,18 +223,30 @@ public class UnifiedHemorrhageQueryService {
         }
     }
 
+    /**
+     * 类型安全地读取布尔值。
+     */
     private Boolean asBoolean(Object value) {
         return value instanceof Boolean booleanValue ? booleanValue : null;
     }
 
+    /**
+     * 类型安全地读取浮点值。
+     */
     private Float asFloat(Object value) {
         return value instanceof Number number ? number.floatValue() : null;
     }
 
+    /**
+     * 将任意对象转为字符串。
+     */
     private String asString(Object value) {
         return value == null ? null : String.valueOf(value);
     }
 
+    /**
+     * 从多个候选值中返回第一个非 null 值。
+     */
     @SafeVarargs
     private final <T> T firstNonNull(T... values) {
         if (values == null) {
@@ -219,6 +260,9 @@ public class UnifiedHemorrhageQueryService {
         return null;
     }
 
+    /**
+     * 从多个候选文本中返回第一个非空值。
+     */
     private String firstNonBlank(String... values) {
         if (values == null) {
             return null;

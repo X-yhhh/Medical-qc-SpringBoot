@@ -35,12 +35,15 @@ import java.util.concurrent.TimeUnit;
 public class ActiveMqRunner implements org.springframework.boot.CommandLineRunner, DisposableBean {
     private static final Logger logger = LoggerFactory.getLogger(ActiveMqRunner.class);
 
+    // ActiveMQ 配置同时包含是否启用、自动拉起和本机安装目录等信息。
     private final ActiveMqProperties activeMqProperties;
+    // JMS 监听器注册表用于 broker ready 后再手动启动消费者。
     private final JmsListenerEndpointRegistry jmsListenerEndpointRegistry;
 
     @Value("${spring.activemq.broker-url:tcp://127.0.0.1:61616}")
     private String brokerUrl;
 
+    // 标记当前 broker 是否由本进程拉起，以决定销毁时是否需要主动 stop。
     private boolean managedBroker;
 
     public ActiveMqRunner(ActiveMqProperties activeMqProperties,
@@ -56,6 +59,7 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
             return;
         }
 
+        // broker-url 非法时直接放弃启动，避免后续 socket 探测和脚本调用误行为。
         URI brokerUri = parseBrokerUri();
         if (brokerUri == null) {
             logger.error("Invalid spring.activemq.broker-url: {}", brokerUrl);
@@ -64,6 +68,7 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
 
         if (isBrokerReachable(brokerUri, 1500)) {
             logger.info("ActiveMQ broker is already reachable at {}", brokerUrl);
+            // broker 已就绪时直接启动监听器，不重复拉起本地 broker。
             startListeners();
             return;
         }
@@ -86,6 +91,7 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
         processBuilder.redirectErrorStream(true);
 
         Process startProcess = processBuilder.start();
+        // 异步消费启动脚本输出，避免缓冲区阻塞导致脚本卡死。
         drainProcessOutput(startProcess, "[ActiveMQ Bootstrap]");
         startProcess.waitFor(15, TimeUnit.SECONDS);
 
@@ -119,11 +125,13 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
         processBuilder.redirectErrorStream(true);
 
         Process stopProcess = processBuilder.start();
+        // 同样异步消费 stop 脚本输出，便于定位关闭失败原因。
         drainProcessOutput(stopProcess, "[ActiveMQ Shutdown]");
         stopProcess.waitFor(15, TimeUnit.SECONDS);
     }
 
     private void startListeners() {
+        // 只有在 broker 就绪后才启动监听器，避免消费者初始化时报连接错误。
         if (!jmsListenerEndpointRegistry.isRunning()) {
             jmsListenerEndpointRegistry.start();
             logger.info("JMS listeners started.");
@@ -138,6 +146,9 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
         }
     }
 
+    /**
+     * 轮询等待 broker 端口可连通。
+     */
     private boolean waitForBroker(URI brokerUri, long timeoutMs, long intervalMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
@@ -155,6 +166,9 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
         return false;
     }
 
+    /**
+     * 通过 TCP 连接判断 broker 是否可达。
+     */
     private boolean isBrokerReachable(URI brokerUri, int timeoutMs) {
         String host = brokerUri.getHost() == null ? "127.0.0.1" : brokerUri.getHost();
         int port = brokerUri.getPort();
@@ -170,6 +184,9 @@ public class ActiveMqRunner implements org.springframework.boot.CommandLineRunne
         }
     }
 
+    /**
+     * 消费启动/关闭脚本输出，避免子进程阻塞。
+     */
     private void drainProcessOutput(Process process, String prefix) {
         Thread outputReader = new Thread(() -> {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {

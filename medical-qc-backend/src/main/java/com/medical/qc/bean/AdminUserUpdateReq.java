@@ -4,12 +4,18 @@ package com.medical.qc.bean;
  * 管理员更新用户信息请求体。
  */
 public class AdminUserUpdateReq {
+    // 用户真实姓名。
     private String fullName;
+    // 所属医院。
     private String hospital;
+    // 科室或管理单元。
     private String department;
+    // 目标角色编码。
     private String role;
+    // 目标启用状态。
     private Boolean isActive;
 
+    // 以下访问器供管理员页面权限编辑表单绑定。
     public String getFullName() {
         return fullName;
     }

@@ -17,13 +17,18 @@ import java.util.Map;
  */
 @Component
 public class MockQualityTaskViewAssembler {
+    // 与任务执行服务共享同一套状态编码，确保页面标签映射稳定。
     private static final String STATUS_PENDING = "PENDING";
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_SUCCESS = "SUCCESS";
     private static final String STATUS_FAILED = "FAILED";
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    /**
+     * 组装任务中心顶部统计摘要。
+     */
     public Map<String, Object> buildTaskSummary(List<QcTaskRecord> taskRecords) {
+        // 从任务列表中计算页面顶部需要的计数和平均分。
         long totalTasks = taskRecords.size();
         long pendingTasks = taskRecords.stream().filter(record -> STATUS_PENDING.equals(record.getTaskStatus())).count();
         long processingTasks = taskRecords.stream().filter(record -> STATUS_PROCESSING.equals(record.getTaskStatus())).count();
@@ -54,6 +59,9 @@ public class MockQualityTaskViewAssembler {
         return summary;
     }
 
+    /**
+     * 组装任务提交响应。
+     */
     public Map<String, Object> toSubmitResponse(MockQualityTaskSnapshot snapshot) {
         Map<String, Object> response = new HashMap<>();
         response.put("taskId", snapshot.getTaskId());
@@ -67,6 +75,9 @@ public class MockQualityTaskViewAssembler {
         return response;
     }
 
+    /**
+     * 组装任务列表单行数据。
+     */
     public Map<String, Object> toTaskListItem(QcTaskRecord taskRecord) {
         Map<String, Object> item = new HashMap<>();
         item.put("recordId", taskRecord.getId());
@@ -90,7 +101,11 @@ public class MockQualityTaskViewAssembler {
         return item;
     }
 
+    /**
+     * 组装任务详情响应。
+     */
     public Map<String, Object> toTaskDetailResponse(QcTaskRecord taskRecord, Map<String, Object> result) {
+        // 详情响应在列表摘要基础上附加原始文件名、存储路径和结构化结果体。
         Map<String, Object> response = new HashMap<>(toTaskListItem(taskRecord));
         response.put("originalFilename", taskRecord.getOriginalFilename());
         response.put("storedFilePath", taskRecord.getStoredFilePath());
@@ -98,6 +113,9 @@ public class MockQualityTaskViewAssembler {
         return response;
     }
 
+    /**
+     * 判断任务是否属于成功但异常的质控任务。
+     */
     private boolean isAbnormalTaskRecord(QcTaskRecord taskRecord) {
         return taskRecord != null
                 && STATUS_SUCCESS.equals(taskRecord.getTaskStatus())
@@ -105,10 +123,16 @@ public class MockQualityTaskViewAssembler {
                 || (taskRecord.getAbnormalCount() != null && taskRecord.getAbnormalCount() > 0));
     }
 
+    /**
+     * 把来源模式编码转换为页面展示文案。
+     */
     private String resolveSourceModeLabel(String sourceMode) {
         return MockQualityAnalysisSupport.SOURCE_MODE_PACS.equals(sourceMode) ? "PACS 调取" : "本地上传";
     }
 
+    /**
+     * 统一格式化任务时间字段。
+     */
     private String formatDateTime(LocalDateTime dateTime) {
         if (dateTime == null) {
             return "--";
@@ -117,6 +141,9 @@ public class MockQualityTaskViewAssembler {
         return dateTime.format(DATE_TIME_FORMATTER);
     }
 
+    /**
+     * 保留一位小数，保证页面统计展示稳定。
+     */
     private double roundOneDecimal(double value) {
         return Math.round(value * 10.0D) / 10.0D;
     }

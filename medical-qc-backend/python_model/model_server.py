@@ -1,3 +1,12 @@
+"""
+脑出血多任务模型 WebSocket 服务。
+
+数据链路:
+1. Spring Boot 后端通过 WebSocket 发送 image_path 或 health_check。
+2. 本服务加载 CUDA 模型并执行图像预处理与推理。
+3. 返回脑出血、中线偏移、脑室异常等结构化结果，供后端继续落库和回显。
+"""
+
 import asyncio
 import websockets
 import json
@@ -18,7 +27,7 @@ class AdvancedHemorrhageModel(nn.Module):
     def __init__(self):
         super(AdvancedHemorrhageModel, self).__init__()
         
-        # Shared Feature Extractor (Backbone)
+        # 共享特征提取主干，三项任务共用同一套卷积特征。
         self.features = nn.Sequential(
             # Block 1
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
@@ -48,7 +57,7 @@ class AdvancedHemorrhageModel(nn.Module):
             nn.AdaptiveAvgPool2d((1, 1))
         )
         
-        # Task-specific Heads
+        # 任务特定输出头。
         
         # Head 1: Hemorrhage Detection (Binary)
         self.hemorrhage_head = nn.Sequential(
@@ -78,6 +87,7 @@ class AdvancedHemorrhageModel(nn.Module):
         )
 
     def forward(self, x):
+        # 先抽取共享特征，再分发到三个任务头。
         features = self.features(x)
         
         hemorrhage_out = self.hemorrhage_head(features)
@@ -86,10 +96,10 @@ class AdvancedHemorrhageModel(nn.Module):
         
         return hemorrhage_out, midline_out, ventricle_out
 
-# Global model variable
+# 全局模型变量，服务启动后加载一次并被每个连接复用。
 model = None
 
-# Force CUDA (required)
+# 当前模型强制要求 CUDA，避免误跑到 CPU 导致性能和环境不符合预期。
 if not torch.cuda.is_available():
     raise RuntimeError("CUDA is not available. Hemorrhage model inference requires CUDA.")
 
@@ -128,7 +138,7 @@ def load_model():
         print("Error: Model file not found. Please run train_advanced.py first.")
         model = None
 
-# Preprocessing
+# 推理预处理：统一缩放、转 tensor、按训练时分布做归一化。
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -139,6 +149,7 @@ async def handle_connection(websocket):
     print(f"New connection from {websocket.remote_address}")
     try:
         async for message in websocket:
+            # 每条消息都应该是后端发送的 JSON 请求。
             data = json.loads(message)
 
             # 健康检查请求仅用于后端启动阶段确认模型服务是否可用，
@@ -165,7 +176,7 @@ async def handle_connection(websocket):
 
             try:
                 start_time = time.time()
-                # Inference
+                # 统一转成灰度图，匹配当前模型输入通道数。
                 image = Image.open(image_path).convert("L")
                 image = transform(image).unsqueeze(0).to(device)
                 
@@ -191,6 +202,7 @@ async def handle_connection(websocket):
                 prediction = "Hemorrhage" if pred_hem_idx == 1 else "Normal"
                 confidence = f"{max(hemorrhage_prob, no_hemorrhage_prob) * 100:.2f}%"
                 
+                # 返回毫秒级耗时，供前端和后端日志展示。
                 duration = (time.time() - start_time) * 1000  # ms
 
                 # --- Midline & Ventricle Details ---
@@ -202,9 +214,9 @@ async def handle_connection(websocket):
                 
                 if midline_shift:
                     midline_detail = f"检测到中线偏移 (置信度: {midline_shift_prob*100:.1f}%)"
-                    # Calculate approximate shift score
+                    # 基于图像重心粗略估计偏移量，作为演示级别的 shift_score。
                     try:
-                        # Use imdecode to support unicode paths on Windows
+                        # 使用 imdecode 兼容 Windows 下的中文路径。
                         cv_img = cv2.imdecode(np.fromfile(image_path, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
                         if cv_img is None:
                             raise Exception("Failed to read image")
@@ -217,6 +229,7 @@ async def handle_connection(websocket):
                             shift_pixels = abs(cX - image_center_x)
                             shift_score = round(shift_pixels * 0.5, 2)
                     except:
+                        # 图像解析失败时使用保守兜底值，避免整个请求报错。
                         shift_score = 5.0 # Default fallback
                     
                     midline_detail += f" 偏移约 {shift_score}mm"
@@ -251,6 +264,7 @@ async def handle_connection(websocket):
         print("Connection closed")
 
 async def main():
+    # 服务启动时先加载模型，再监听本机固定端口。
     load_model()
     async with websockets.serve(handle_connection, "localhost", 8765):
         print("WebSocket server started on ws://localhost:8765")

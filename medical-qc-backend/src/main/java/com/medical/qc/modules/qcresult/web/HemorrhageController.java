@@ -28,7 +28,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/quality")
 public class HemorrhageController {
+    // 应用服务负责检测与历史查询编排。
     private final HemorrhageRecordApplicationService hemorrhageRecordApplicationService;
+    // 会话辅助组件负责登录态和医生角色校验。
     private final SessionUserSupport sessionUserSupport;
 
     public HemorrhageController(HemorrhageRecordApplicationService hemorrhageRecordApplicationService,
@@ -37,6 +39,9 @@ public class HemorrhageController {
         this.sessionUserSupport = sessionUserSupport;
     }
 
+    /**
+     * 查询指定脑出血检测历史记录详情。
+     */
     @GetMapping("/hemorrhage/history/{recordId}")
     public ResponseEntity<?> getHemorrhageHistoryDetail(@PathVariable("recordId") Long recordId,
                                                         HttpSession session) {
@@ -48,6 +53,9 @@ public class HemorrhageController {
         return ResponseEntity.ok(Collections.singletonMap("data", record));
     }
 
+    /**
+     * 查询当前医生的脑出血检测历史。
+     */
     @GetMapping("/hemorrhage/history")
     public ResponseEntity<?> getHemorrhageHistory(@RequestParam(value = "limit", defaultValue = "20") int limit,
                                                   HttpSession session) {
@@ -56,6 +64,10 @@ public class HemorrhageController {
         return ResponseEntity.ok(Collections.singletonMap("data", history));
     }
 
+    /**
+     * 提交脑出血检测请求。
+     * 支持本地上传和 PACS 两种输入模式。
+     */
     @PostMapping("/hemorrhage")
     public ResponseEntity<?> analyzeHemorrhage(
             @RequestParam(value = "file", required = false) MultipartFile file,
@@ -69,6 +81,7 @@ public class HemorrhageController {
             @RequestParam(value = "source_mode", defaultValue = "local") String sourceMode,
             HttpSession session) throws IOException {
         User user = requireDoctorSession(session);
+        // 控制器只负责收集表单参数，具体预处理、推理、持久化由应用服务完成。
         Map<String, Object> result = hemorrhageRecordApplicationService.analyzeHemorrhage(
                 new HemorrhageAnalysisCommand(
                         file,
@@ -83,6 +96,9 @@ public class HemorrhageController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 校验当前会话属于医生。
+     */
     private User requireDoctorSession(HttpSession session) {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
         sessionUserSupport.requireDoctor(user);

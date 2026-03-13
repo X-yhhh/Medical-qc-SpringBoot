@@ -76,6 +76,7 @@ export const ROLE_MENU_CONFIG = [
  */
 export const hasRoleAccess = (roles, role = DEFAULT_ROLE) => {
   if (!Array.isArray(roles) || roles.length === 0) {
+    // 未显式声明角色限制时，默认所有已登录用户都可访问。
     return true
   }
 
@@ -88,6 +89,7 @@ export const hasRoleAccess = (roles, role = DEFAULT_ROLE) => {
  * @returns {string} 当前角色
  */
 export const getCurrentRole = () => {
+  // 菜单和默认路由都只依赖缓存中的标准化角色信息。
   const role = getStoredUserInfo()?.role
   return isSupportedRole(role) ? role : DEFAULT_ROLE
 }
@@ -99,6 +101,7 @@ export const getCurrentRole = () => {
  * @returns {string} 默认跳转路由
  */
 export const resolveDefaultRouteForRole = (role = DEFAULT_ROLE) => {
+  // 当前两个角色都落到首页，但保留函数用于未来扩展角色首页差异。
   return role === 'admin' ? '/dashboard' : '/dashboard'
 }
 
@@ -114,6 +117,7 @@ export const getMenusByRole = (role = DEFAULT_ROLE) => {
       return section
     }
 
+    // 分组菜单需要继续过滤子项，避免管理员/医生看到越权入口。
     return {
       ...section,
       children: section.children.filter((child) => hasRoleAccess(child.roles, role)),

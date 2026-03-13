@@ -14,21 +14,31 @@ import java.time.LocalDateTime;
  * </ul>
  */
 public class MockQualityTaskMessage implements Serializable {
+    // 消息体序列化版本号。
     private static final long serialVersionUID = 1L;
 
+    // 统一任务 ID。
     private String taskId;
+    // 任务类型编码。
     private String taskType;
+    // 来源模式：local 或 pacs。
     private String sourceMode;
+    // 提交用户 ID。
     private Long userId;
+    // 患者姓名与检查号。
     private String patientName;
     private String examId;
+    // 原始文件名和已存储文件路径。
     private String originalFilename;
     private String storedFilePath;
+    // 提交时间。
     private LocalDateTime submittedAt;
 
+    // 无参构造供 JMS / Jackson 反序列化使用。
     public MockQualityTaskMessage() {
     }
 
+    // 全参构造供任务提交时快速创建消息体。
     public MockQualityTaskMessage(String taskId,
                                   String taskType,
                                   String sourceMode,
@@ -49,6 +59,7 @@ public class MockQualityTaskMessage implements Serializable {
         this.submittedAt = submittedAt;
     }
 
+    // 以下访问器供 JMS 反序列化与消费者读取。
     public String getTaskId() {
         return taskId;
     }

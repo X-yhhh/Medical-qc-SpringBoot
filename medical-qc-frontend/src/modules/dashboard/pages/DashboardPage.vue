@@ -237,18 +237,22 @@ const router = useRouter()
 const currentDate = ref(dayjs().format('YYYY年MM月DD日 dddd'))
 // 图表统计周期选择 (week/month)
 const chartPeriod = ref('week')
+// 首页头部和核心卡片的状态都由 overview 接口统一回填。
 const welcomeName = ref('医生')
 const pendingTaskCount = ref(0)
 const statsData = ref([])
 const riskList = ref([])
 const highRiskCount = ref(0)
 const activities = ref([])
+// 趋势图 DOM 引用与 ECharts 实例。
 const dashboardTrendChartRef = ref(null)
 let dashboardTrendChart = null
 
+// 当前登录用户决定首页是管理员视角还是医生视角。
 const currentUserInfo = computed(() => getStoredUserInfo())
 const isAdminView = computed(() => currentUserInfo.value?.role === 'admin')
 
+// 页面欢迎文案跟随视角切换。
 const welcomeDescription = computed(() => {
   return isAdminView.value ? '当前待关注系统质控任务' : '今日待处理影像质控任务'
 })
@@ -375,6 +379,7 @@ const normalizeDashboardTrendData = (response) => {
  * 快捷入口配置
  * 配置系统各个子模块的路由跳转信息
  */
+// 医生视角更偏向具体质控任务入口。
 const doctorQuickAccessItems = [
   {
     name: 'CT头部平扫',
@@ -420,6 +425,7 @@ const doctorQuickAccessItems = [
   },
 ]
 
+// 管理员视角更偏向全局治理和运营入口。
 const adminQuickAccessItems = [
   {
     name: '质控任务中心',
@@ -451,6 +457,7 @@ const adminQuickAccessItems = [
   },
 ]
 
+// 根据当前角色切换快捷入口分组。
 const quickAccessItems = computed(() => {
   return isAdminView.value ? adminQuickAccessItems : doctorQuickAccessItems
 })
@@ -461,6 +468,7 @@ const quickAccessItems = computed(() => {
  */
 const recentVisits = ref([])
 
+// 右侧快捷按钮按角色区分常用操作。
 const sideActionButtons = computed(() => {
   if (isAdminView.value) {
     return [
@@ -483,6 +491,7 @@ const sideActionButtons = computed(() => {
  */
 const loadDashboardOverview = async () => {
   const response = await getDashboardOverview()
+  // overview 接口已按前端所需结构聚合完成，这里只做安全回填。
   welcomeName.value = response?.welcomeName || '医生'
   pendingTaskCount.value = response?.pendingTaskCount || 0
   statsData.value = Array.isArray(response?.stats) ? response.stats : []
@@ -492,10 +501,12 @@ const loadDashboardOverview = async () => {
   recentVisits.value = Array.isArray(response?.recentVisits) ? response.recentVisits : []
 }
 
+// 最近访问项可能跳到不同页面，因此直接使用后端返回的 path + query。
 const handleRecentVisitClick = (item) => {
   router.push({ path: item.path, query: item.query })
 }
 
+// 头部“查看任务中心”统一跳转到任务中心。
 const handleQuickAccessHeaderClick = () => {
   router.push('/quality-tasks')
 }
@@ -510,10 +521,12 @@ const loadDashboardTrend = async () => {
     await nextTick()
 
     if (hasDashboardTrendData.value) {
+      // 仅在存在有效数据时初始化图表，避免空图表占位。
       initDashboardTrendChart(dashboardTrendData.value)
       return
     }
 
+    // 无数据时主动销毁旧图表，防止视图切换后残留上一轮图表。
     dashboardTrendChart?.dispose()
     dashboardTrendChart = null
   } catch (error) {
@@ -535,6 +548,7 @@ const initDashboardTrendChart = (data) => {
   }
 
   if (!dashboardTrendChart) {
+    // 只在首次渲染时创建实例，后续通过 setOption 更新。
     dashboardTrendChart = echarts.init(dashboardTrendChartRef.value)
   }
 
@@ -546,6 +560,7 @@ const initDashboardTrendChart = (data) => {
       borderWidth: 1,
       textStyle: { color: '#303133' },
       formatter: (params) => {
+        // tooltip 中根据系列名动态补全单位，保持展示一致。
         const rows = params.map((item) => {
           const unit = item.seriesName.includes('率') ? '%' : item.seriesName.includes('评分') ? '分' : '例'
           return `${item.marker}${item.seriesName}：${item.value}${unit}`
@@ -650,16 +665,19 @@ const handleResize = () => {
  * 页面挂载时加载最新历史记录。
  */
 onMounted(async () => {
+  // 首页首屏并发加载总览和趋势，减少等待时间。
   const pendingTasks = [loadDashboardOverview(), loadDashboardTrend()]
   await Promise.allSettled(pendingTasks)
   window.addEventListener('resize', handleResize)
 })
 
 watch(chartPeriod, () => {
+  // 切换周/月后重新请求趋势数据。
   loadDashboardTrend()
 })
 
 onUnmounted(() => {
+  // 页面销毁时清理 resize 监听和图表实例。
   window.removeEventListener('resize', handleResize)
   dashboardTrendChart?.dispose()
   dashboardTrendChart = null

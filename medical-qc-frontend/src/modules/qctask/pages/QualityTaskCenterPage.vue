@@ -218,6 +218,7 @@ import { getStoredUserInfo } from '@/utils/auth'
 
 const route = useRoute()
 
+// 任务类型筛选项与后端 task_type 编码保持一致。
 const TASK_TYPE_OPTIONS = [
   { label: 'CT头部平扫质控', value: 'head' },
   { label: 'CT胸部平扫质控', value: 'chest-non-contrast' },
@@ -225,6 +226,7 @@ const TASK_TYPE_OPTIONS = [
   { label: '冠脉CTA质控', value: 'coronary-cta' },
 ]
 
+// 任务执行状态筛选项。
 const STATUS_OPTIONS = [
   { label: '等待执行', value: 'PENDING' },
   { label: '执行中', value: 'PROCESSING' },
@@ -232,17 +234,20 @@ const STATUS_OPTIONS = [
   { label: '执行失败', value: 'FAILED' },
 ]
 
+// 来源模式筛选项。
 const SOURCE_MODE_OPTIONS = [
   { label: '本地上传', value: 'local' },
   { label: 'PACS 调取', value: 'pacs' },
 ]
 
+// 列表加载态、详情加载态和详情弹窗状态。
 const loading = ref(false)
 const detailLoading = ref(false)
 const dialogVisible = ref(false)
 const tableData = ref([])
 const currentTask = ref(null)
 
+// 顶部筛选条件直接透传给分页接口。
 const filters = ref({
   query: '',
   taskType: '',
@@ -250,12 +255,14 @@ const filters = ref({
   sourceMode: '',
 })
 
+// 分页状态与后端分页结构一一对应。
 const pagination = ref({
   page: 1,
   limit: 10,
   total: 0,
 })
 
+// 顶部统计卡片的原始数据源。
 const summary = ref({
   totalTasks: 0,
   runningTasks: 0,
@@ -265,12 +272,15 @@ const summary = ref({
   todayTasks: 0,
 })
 
+// 管理员可看全局任务，医生看到个人任务，因此页面头部标签依赖当前角色。
 const isAdminView = computed(() => getStoredUserInfo()?.role === 'admin')
+// 详情弹窗中的 patientInfo / summary / qcItems 都来自后端 result 字段的不同片段。
 const detailResult = computed(() => currentTask.value?.result || {})
 const detailPatientInfo = computed(() => detailResult.value?.patientInfo || {})
 const detailSummary = computed(() => detailResult.value?.summary || {})
 const detailQcItems = computed(() => (Array.isArray(detailResult.value?.qcItems) ? detailResult.value.qcItems : []))
 
+// 顶部统计卡片根据 summary 聚合值直接派生展示结构。
 const summaryCards = computed(() => [
   {
     label: '任务总数',
@@ -302,6 +312,7 @@ const summaryCards = computed(() => [
   },
 ])
 
+// 分页加载任务列表，并同步刷新顶部摘要。
 const loadTasks = async () => {
   loading.value = true
   try {
@@ -314,6 +325,7 @@ const loadTasks = async () => {
       source_mode: filters.value.sourceMode || undefined,
     })
 
+    // 新接口返回 items + total + summary，页面按结构化字段回填。
     tableData.value = Array.isArray(response?.items) ? response.items : []
     pagination.value.total = Number(response?.total || 0)
     pagination.value.page = Number(response?.page || pagination.value.page)
@@ -327,11 +339,13 @@ const loadTasks = async () => {
   }
 }
 
+// 打开任务详情弹窗，并按 taskId 拉取结构化结果。
 const openTaskDetail = async (taskId) => {
   if (!taskId) {
     return
   }
 
+  // 先打开弹窗再拉取详情，用户能立即感知到操作已触发。
   dialogVisible.value = true
   detailLoading.value = true
   try {
@@ -345,11 +359,13 @@ const openTaskDetail = async (taskId) => {
   }
 }
 
+// 切换筛选条件时统一回到第一页。
 const handleSearch = () => {
   pagination.value.page = 1
   loadTasks()
 }
 
+// 重置全部筛选项。
 const resetFilters = () => {
   filters.value = {
     query: '',
@@ -360,17 +376,20 @@ const resetFilters = () => {
   handleSearch()
 }
 
+// 翻页后重新拉取列表。
 const handlePageChange = (page) => {
   pagination.value.page = page
   loadTasks()
 }
 
+// 修改分页大小后回到第一页。
 const handlePageSizeChange = (size) => {
   pagination.value.limit = size
   pagination.value.page = 1
   loadTasks()
 }
 
+// 将任务执行状态映射到 Element Plus Tag 类型。
 const getTaskStatusType = (status) => {
   const mapping = {
     PENDING: 'info',
@@ -381,6 +400,7 @@ const getTaskStatusType = (status) => {
   return mapping[status] || 'info'
 }
 
+// 将任务状态码转换为中文展示文案。
 const getTaskStatusLabel = (status) => {
   const mapping = {
     PENDING: '等待执行',
@@ -391,15 +411,18 @@ const getTaskStatusLabel = (status) => {
   return mapping[status] || status || '--'
 }
 
+// 质控分无效时统一显示为 --。
 function formatScore(score) {
   const numericScore = Number(score)
   if (!Number.isFinite(numericScore) || numericScore <= 0) {
     return '--'
   }
+  // 整数分不补小数，非整数保留 1 位，保持列表展示紧凑。
   return numericScore % 1 === 0 ? String(numericScore) : numericScore.toFixed(1)
 }
 
 onMounted(async () => {
+  // 首屏加载列表；若路由带 taskId，则直接打开对应详情。
   await loadTasks()
   if (typeof route.query.taskId === 'string' && route.query.taskId) {
     openTaskDetail(route.query.taskId)
@@ -408,12 +431,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 页面整体容器。 */
 .quality-task-page {
   min-height: calc(100vh - 60px);
   padding: 24px;
   background: #f5f7fa;
 }
 
+/* 顶部标题区。 */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -441,6 +466,7 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+/* 统计卡片、筛选卡片与表格卡片共用外观。 */
 .summary-card,
 .filter-card,
 .table-card {
@@ -452,12 +478,14 @@ onMounted(async () => {
     0 3px 10px rgba(15, 23, 42, 0.04);
 }
 
+/* 统计卡片内部布局。 */
 .summary-card :deep(.el-card__body) {
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
+/* 左侧图标块。 */
 .summary-icon {
   display: flex;
   align-items: center;
@@ -488,6 +516,7 @@ onMounted(async () => {
   background: rgba(103, 194, 58, 0.12);
 }
 
+/* 统计文案区。 */
 .summary-label {
   font-size: 14px;
   color: #909399;
@@ -506,6 +535,7 @@ onMounted(async () => {
   color: #909399;
 }
 
+/* 顶部筛选工具栏。 */
 .filter-card {
   margin-bottom: 20px;
 }
@@ -525,6 +555,7 @@ onMounted(async () => {
   width: 360px;
 }
 
+/* 列表卡片头部。 */
 .card-header {
   display: flex;
   align-items: center;
@@ -542,12 +573,14 @@ onMounted(async () => {
   font-size: 13px;
 }
 
+/* 分页区域。 */
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
   margin-top: 20px;
 }
 
+/* 详情弹窗内部排版。 */
 .detail-content {
   padding: 0 8px;
 }
@@ -584,6 +617,7 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
+/* 详情顶部摘要卡片。 */
 .detail-summary-row {
   margin-bottom: 18px;
 }
@@ -611,10 +645,12 @@ onMounted(async () => {
   font-size: 18px;
 }
 
+/* 公共区块。 */
 .info-descriptions {
   margin-bottom: 20px;
 }
 
+/* 详情区块外边距。 */
 .section-block {
   margin-bottom: 22px;
 }
@@ -628,11 +664,13 @@ onMounted(async () => {
   color: #303133;
 }
 
+/* 质控项详情列表。 */
 .qc-item-list {
   display: grid;
   gap: 12px;
 }
 
+/* 单个质控项卡片。 */
 .qc-item {
   padding: 14px 16px;
   border-radius: 10px;
@@ -640,16 +678,19 @@ onMounted(async () => {
   background: #fff;
 }
 
+/* 异常结果卡片。 */
 .qc-item.is-error {
   border-color: rgba(245, 108, 108, 0.24);
   background: rgba(254, 242, 242, 0.66);
 }
 
+/* 正常结果卡片。 */
 .qc-item.is-success {
   border-color: rgba(103, 194, 58, 0.22);
   background: rgba(240, 253, 244, 0.72);
 }
 
+/* 质控项头部。 */
 .qc-item__header {
   display: flex;
   justify-content: space-between;
@@ -657,18 +698,21 @@ onMounted(async () => {
   gap: 12px;
 }
 
+/* 质控项名称。 */
 .qc-item__name {
   font-size: 15px;
   font-weight: 600;
   color: #1f2937;
 }
 
+/* 质控项描述。 */
 .qc-item__desc {
   margin-top: 8px;
   color: #4b5563;
   line-height: 1.6;
 }
 
+/* 质控项异常详情。 */
 .qc-item__detail {
   margin-top: 8px;
   color: #b42318;

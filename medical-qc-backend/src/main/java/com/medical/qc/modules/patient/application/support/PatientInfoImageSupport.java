@@ -20,17 +20,22 @@ import java.util.UUID;
  */
 @Component
 public class PatientInfoImageSupport {
+    // 文件真正落盘和复制都委托给统一文件存储网关。
     private final FileStorageGateway fileStorageGateway;
 
     public PatientInfoImageSupport(FileStorageGateway fileStorageGateway) {
         this.fileStorageGateway = fileStorageGateway;
     }
 
+    /**
+     * 校验上传图片格式。
+     */
     public void validateImageFile(MultipartFile imageFile) {
         if (imageFile == null || imageFile.isEmpty()) {
             return;
         }
 
+        // 与前端上传组件保持一致，只允许常见位图格式。
         String filename = imageFile.getOriginalFilename();
         String extension = filename == null ? "" : filename.toLowerCase(Locale.ROOT);
         if (!(extension.endsWith(".png")
@@ -41,12 +46,17 @@ public class PatientInfoImageSupport {
         }
     }
 
+    /**
+     * 保存本地上传的患者影像图片。
+     * 数据链路：MultipartFile -> FileStorageGateway.store -> /uploads/patient-info/... 公共路径。
+     */
     public String storeUploadedImage(String taskType, MultipartFile imageFile, String accessionNumber) {
         if (imageFile == null || imageFile.isEmpty()) {
             return null;
         }
 
         try {
+            // 先把检查号清洗成安全文件名前缀，缺失时退化为随机 UUID。
             String safeAccessionNumber = normalizeText(accessionNumber);
             if (safeAccessionNumber == null) {
                 safeAccessionNumber = UUID.randomUUID().toString();
@@ -64,18 +74,23 @@ public class PatientInfoImageSupport {
         }
     }
 
+    /**
+     * 把 PACS 缓存图片复制到患者图片目录。
+     */
     public String copyPacsImageToPatientDirectory(String taskType, String imageFilePath, String accessionNumber) {
         String normalizedImageFilePath = normalizeText(imageFilePath);
         if (normalizedImageFilePath == null) {
             return null;
         }
 
+        // PACS 缓存文件不存在时直接跳过当前记录。
         Path sourcePath = Paths.get(normalizedImageFilePath);
         if (Files.notExists(sourcePath)) {
             return null;
         }
 
         try {
+            // 同样以检查号作为文件名前缀，便于后续追踪。
             String safeAccessionNumber = normalizeText(accessionNumber);
             if (safeAccessionNumber == null) {
                 safeAccessionNumber = UUID.randomUUID().toString();
@@ -93,11 +108,15 @@ public class PatientInfoImageSupport {
         }
     }
 
+    /**
+     * 根据 PACS 记录的部位和描述判断其是否属于当前 taskType。
+     */
     public boolean matchesTaskType(String taskType, PacsStudyCache pacsStudy) {
         if (pacsStudy == null) {
             return false;
         }
 
+        // bodyPart + studyDescription 合并后做宽松文本匹配。
         String bodyPart = normalizeText(pacsStudy.getBodyPart());
         String studyDescription = normalizeText(pacsStudy.getStudyDescription());
         String mergedText = ((bodyPart == null ? "" : bodyPart) + " " + (studyDescription == null ? "" : studyDescription))
@@ -116,6 +135,9 @@ public class PatientInfoImageSupport {
         };
     }
 
+    /**
+     * 解析图片扩展名，未知格式统一回退为 png。
+     */
     private String resolveImageExtension(String filename) {
         String normalizedFilename = filename == null ? "" : filename.trim().toLowerCase(Locale.ROOT);
         if (normalizedFilename.endsWith(".jpg")) {
@@ -130,6 +152,9 @@ public class PatientInfoImageSupport {
         return ".png";
     }
 
+    /**
+     * 去空格并把空字符串转为 null。
+     */
     private String normalizeText(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }

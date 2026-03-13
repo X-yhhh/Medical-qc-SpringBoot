@@ -14,7 +14,9 @@ import java.util.Map;
  */
 @Service
 public class QualityTaskApplicationService {
+    // 提交与状态迁移逻辑全部由任务服务实现承担。
     private final MockQualityTaskServiceImpl mockQualityTaskService;
+    // 任务列表与详情查询统一走统一模型读服务。
     private final UnifiedQcTaskQueryService unifiedQcTaskQueryService;
 
     public QualityTaskApplicationService(MockQualityTaskServiceImpl mockQualityTaskService,
@@ -23,6 +25,9 @@ public class QualityTaskApplicationService {
         this.unifiedQcTaskQueryService = unifiedQcTaskQueryService;
     }
 
+    /**
+     * 提交异步质控任务。
+     */
     public Map<String, Object> submitTask(QualityTaskSubmitCommand command) throws IOException {
         return mockQualityTaskService.submitTask(
                 command.taskType(),
@@ -33,10 +38,16 @@ public class QualityTaskApplicationService {
                 command.user());
     }
 
+    /**
+     * 查询单个任务详情。
+     */
     public Map<String, Object> getTaskDetail(String taskId, Long scopedUserId) {
         return unifiedQcTaskQueryService.getTaskDetail(taskId, scopedUserId);
     }
 
+    /**
+     * 查询任务分页列表。
+     */
     public Map<String, Object> getTaskPage(Long scopedUserId,
                                            int page,
                                            int limit,

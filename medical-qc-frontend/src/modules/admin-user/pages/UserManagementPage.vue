@@ -152,23 +152,27 @@ import { clearAuthState, getStoredUserInfo, ROLE_OPTIONS } from '@/utils/auth'
 
 const router = useRouter()
 
+// 列表加载态、提交态和编辑弹窗状态。
 const loading = ref(false)
 const submitting = ref(false)
 const dialogVisible = ref(false)
 const formRef = ref(null)
 
+// 顶部筛选条件直接透传到用户分页接口。
 const filters = ref({
   keyword: '',
   role: '',
   active: undefined,
 })
 
+// 分页状态与后端分页字段保持一致。
 const pagination = ref({
   page: 1,
   limit: 10,
   total: 0,
 })
 
+// 顶部统计卡片的数据源。
 const summary = ref({
   totalUsers: 0,
   activeUsers: 0,
@@ -177,8 +181,10 @@ const summary = ref({
   doctorUsers: 0,
 })
 
+// 列表数据源。
 const tableData = ref([])
 
+// 编辑表单同时保存“当前值”和“原始值”，用于判断是否需要强制重新登录。
 const editForm = ref({
   id: null,
   username: '',
@@ -192,6 +198,7 @@ const editForm = ref({
   originalIsActive: true,
 })
 
+// 当前登录账号 ID，用于标记“当前账号”和判断是否触发自我权限变更。
 const currentUserId = computed(() => getStoredUserInfo()?.id || null)
 
 /**
@@ -260,6 +267,7 @@ const loadUsers = async () => {
       active: filters.value.active,
     })
 
+    // 分页接口返回 items + total + summary，页面分别回填表格、分页器和统计卡片。
     tableData.value = Array.isArray(response?.items) ? response.items : []
     pagination.value.total = response?.total || 0
     summary.value = {
@@ -280,6 +288,7 @@ const loadUsers = async () => {
  * @param {Object} row 表格当前行数据
  */
 const openEditDialog = (row) => {
+  // 编辑弹窗会把后端行数据映射为可提交的管理表单。
   editForm.value = {
     id: row.id,
     username: row.username,
@@ -306,6 +315,7 @@ const hasPermissionChanged = () => {
     return false
   }
 
+  // 当前登录账号的角色或启停状态变化后，旧会话必须失效。
   return editForm.value.role !== editForm.value.originalRole
     || editForm.value.isActive !== editForm.value.originalIsActive
 }
@@ -320,6 +330,7 @@ const redirectToRelogin = async () => {
     console.warn('登出接口调用失败，已执行本地清理。', error)
   }
 
+  // 无论后端登出是否成功，本地认证缓存都必须清理。
   clearAuthState()
   await router.push({ path: '/login', query: { mode: 'permission-updated' } })
 }
@@ -333,6 +344,7 @@ const handleSubmit = async () => {
   const permissionChanged = hasPermissionChanged()
 
   try {
+    // 提交的字段与后端 AdminUserUpdateReq 保持一致。
     await updateAdminUser(editForm.value.id, {
       fullName: editForm.value.fullName,
       hospital: editForm.value.hospital,
@@ -345,6 +357,7 @@ const handleSubmit = async () => {
     dialogVisible.value = false
 
     if (permissionChanged) {
+      // 当前管理员改了自己的角色或状态后，必须重新登录刷新权限上下文。
       await redirectToRelogin()
       return
     }
@@ -362,6 +375,7 @@ const handleSubmit = async () => {
  * 执行筛选查询。
  */
 const handleSearch = () => {
+  // 切换筛选条件时统一回到第一页。
   pagination.value.page = 1
   loadUsers()
 }
@@ -394,12 +408,14 @@ const handlePageChange = (page) => {
  * @param {number} size 每页条数
  */
 const handlePageSizeChange = (size) => {
+  // 修改分页大小后回到第一页，避免页码越界。
   pagination.value.limit = size
   pagination.value.page = 1
   loadUsers()
 }
 
 onMounted(() => {
+  // 页面进入时立即拉取用户列表和统计摘要。
   loadUsers()
 })
 </script>

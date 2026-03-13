@@ -38,8 +38,11 @@ import java.util.regex.Pattern;
 public class PythonModelRunner implements CommandLineRunner, DisposableBean {
 
     private static final Logger logger = LoggerFactory.getLogger(PythonModelRunner.class);
+    // 用于从 netstat 输出中解析监听端口对应的 PID。
     private static final Pattern NETSTAT_PID_PATTERN = Pattern.compile("(\\d+)\\s*$");
+    // 当前由后端托管的 Python 模型进程句柄。
     private Process pythonProcess;
+    // 健康检查 JSON 的读写都通过 Jackson 完成。
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${python.model.autostart:true}")
@@ -78,6 +81,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
             port = "wss".equalsIgnoreCase(serverUri.getScheme()) ? 443 : 80;
         }
 
+        // 若模型服务已健康可用，直接复用，不重复拉起新进程。
         if (isWebSocketHealthy(serverUri, 2)) {
             logger.info("Python Model Server is already listening on {}:{}, skip autostart.", host, port);
             return;
@@ -86,6 +90,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
         logger.info("Detected unhealthy Python Model Server on {}:{}, attempting cleanup and restart.", host, port);
         cleanupUnhealthyModelServer(port);
 
+        // 清理后再次探活，若旧进程已恢复则不再重复启动。
         if (isWebSocketHealthy(serverUri, 2)) {
             logger.info("Python Model Server recovered before autostart on {}:{}, skip creating a new process.", host, port);
             return;
@@ -132,7 +137,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
         try {
             pythonProcess = pb.start();
 
-            // Consume output in a separate thread to prevent blocking
+            // 独立线程持续消费 Python 输出，避免缓冲区写满导致进程阻塞。
             Thread outputReader = new Thread(() -> {
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(pythonProcess.getInputStream()))) {
@@ -149,6 +154,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
 
             logger.info("Python Model Server process started with PID: {}", pythonProcess.pid());
 
+            // 启动成功后持续轮询健康检查，直到模型真正 ready。
             if (!waitForWebSocketReady(serverUri, 120_000, 1_000)) {
                 logger.error("Python Model Server did not become ready on {}:{} within timeout.", host, port);
                 try {
@@ -172,14 +178,14 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
         if (pythonProcess != null && pythonProcess.isAlive()) {
             logger.info("Stopping Python Model Server...");
 
-            // Kill all descendants first (Java 9+)
+            // 先清理子进程，避免 Python 派生出的 worker 残留占端口。
             pythonProcess.descendants().forEach(ph -> {
                 logger.info("Killing descendant process: {}", ph.pid());
                 ph.destroy();
             });
 
             pythonProcess.destroy();
-            // Allow some time for graceful shutdown
+            // 先尝试优雅退出，再视情况强杀。
             if (!pythonProcess.waitFor(5, TimeUnit.SECONDS)) {
                 logger.warn("Python Model Server did not stop gracefully, forcing shutdown...");
 
@@ -210,6 +216,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
             @Override
             public void onOpen(ServerHandshake handshakedata) {
                 try {
+                    // 健康检查不做真实推理，只发一个轻量标志位。
                     send(objectMapper.writeValueAsString(Map.of("health_check", true)));
                 } catch (Exception e) {
                     future.complete(false);
@@ -264,6 +271,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
                 return true;
             }
             try {
+                // 轮询间隔由调用方控制，避免对 Python 服务造成过高连接压力。
                 Thread.sleep(intervalMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -302,6 +310,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
             return;
         }
 
+        // 只清理看起来像 Python 模型进程的监听者，避免误杀其他服务。
         for (Long pid : pidList) {
             try {
                 ProcessHandle.of(pid).ifPresent(processHandle -> {

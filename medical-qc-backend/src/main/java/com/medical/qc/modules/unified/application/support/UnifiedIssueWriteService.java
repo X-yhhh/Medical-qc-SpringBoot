@@ -36,6 +36,7 @@ import java.util.Objects;
  */
 @Service
 public class UnifiedIssueWriteService {
+    // 工单状态在整个异常汇总链路中保持统一中文枚举。
     private static final String STATUS_PENDING = "待处理";
     private static final String STATUS_PROCESSING = "处理中";
     private static final String STATUS_RESOLVED = "已解决";
@@ -67,13 +68,18 @@ public class UnifiedIssueWriteService {
         this.userMapper = userMapper;
     }
 
+    /**
+     * 根据脑出血检测结果同步异常工单。
+     */
     public void syncHemorrhageIssue(Long taskId) {
         UnifiedQcTask task = loadTask(taskId);
         UnifiedQcResult result = loadResult(task);
+        // 仅不合格或存在异常项的结果才需要建单。
         if (task == null || result == null || !isAbnormalResult(result)) {
             return;
         }
 
+        // 规则中心可关闭自动建单，因此这里要先判断规则是否允许。
         String issueType = firstNonBlank(result.getPrimaryIssueName(), "未见明显异常");
         QcRuleConfig appliedRule = qcRuleConfigService.resolveRule("hemorrhage", issueType);
         if (shouldSkipIssueCreation(appliedRule)) {
@@ -95,6 +101,9 @@ public class UnifiedIssueWriteService {
                 "由脑出血检测结果自动生成异常工单");
     }
 
+    /**
+     * 根据异步质控任务结果同步异常工单。
+     */
     public void syncQualityTaskIssue(Long taskId) {
         UnifiedQcTask task = loadTask(taskId);
         UnifiedQcResult result = loadResult(task);
@@ -123,6 +132,9 @@ public class UnifiedIssueWriteService {
                 "由异步质控任务结果自动生成异常工单");
     }
 
+    /**
+     * 更新工单状态。
+     */
     public void updateIssueStatus(Long scopedUserId,
                                   Long operatorId,
                                   Long issueId,
@@ -135,6 +147,7 @@ public class UnifiedIssueWriteService {
             throw new IllegalArgumentException("不支持的工单状态");
         }
 
+        // 先校验当前用户是否有权访问该工单。
         UnifiedIssueTicket ticket = requireAccessibleTicket(scopedUserId, issueId);
         String beforeStatus = ticket.getStatus();
         LocalDateTime now = LocalDateTime.now();
@@ -146,9 +159,13 @@ public class UnifiedIssueWriteService {
         ticket.setResolvedAt(STATUS_RESOLVED.equals(status) ? now : null);
         unifiedIssueTicketMapper.updateById(ticket);
 
+        // 状态变更会写入动作日志，供详情页时间轴展示。
         insertActionLog(ticket.getId(), operatorId, "update_status", beforeStatus, status, remark, now);
     }
 
+    /**
+     * 更新工单工作流，包括状态、处理人和 CAPA。
+     */
     public void updateIssueWorkflow(Long scopedUserId,
                                     Long operatorId,
                                     Long issueId,
@@ -166,6 +183,7 @@ public class UnifiedIssueWriteService {
             throw new IllegalArgumentException("不支持的工单状态");
         }
 
+        // 指派人和备注需要在状态写入前先归一化。
         Long assigneeUserId = resolveAssigneeUserId(normalizedRequest.getAssigneeUserId());
         String remark = trimToNull(normalizedRequest.getRemark());
         String beforeStatus = ticket.getStatus();
@@ -181,6 +199,7 @@ public class UnifiedIssueWriteService {
         ticket.setResolvedAt(STATUS_RESOLVED.equals(nextStatus) ? now : null);
         unifiedIssueTicketMapper.updateById(ticket);
 
+        // CAPA 记录单独存表，和工单主记录分离维护。
         upsertCapaRecord(issueId, operatorId, normalizedRequest);
 
         if (!Objects.equals(beforeAssigneeUserId, assigneeUserId)) {
@@ -203,6 +222,9 @@ public class UnifiedIssueWriteService {
         }
     }
 
+    /**
+     * 获取可分派人员列表。
+     */
     public List<Map<String, Object>> getAssignableUsers() {
         return userMapper.selectList(new QueryWrapper<User>()
                         .eq("is_active", true)
@@ -213,6 +235,9 @@ public class UnifiedIssueWriteService {
                 .toList();
     }
 
+    /**
+     * 新增或更新工单主记录。
+     */
     private void upsertTicket(UnifiedQcTask task,
                               UnifiedQcResult result,
                               UnifiedStudy study,
@@ -227,6 +252,7 @@ public class UnifiedIssueWriteService {
                 .eq("task_id", task.getId())
                 .last("LIMIT 1"));
 
+        // SLA 截止时间以检测完成时间为起点，加规则里的小时数计算。
         LocalDateTime dueAt = calculateDueAt(detectedAt, slaHours);
         if (ticket == null) {
             ticket = new UnifiedIssueTicket();
@@ -253,6 +279,7 @@ public class UnifiedIssueWriteService {
 
         if (ticket.getId() == null) {
             unifiedIssueTicketMapper.insert(ticket);
+            // 首次建单时写 create 动作日志；更新已有工单则只刷新主表字段。
             insertActionLog(ticket.getId(), task.getSubmittedBy(), "create", null, STATUS_PENDING, createRemark, detectedAt);
             return;
         }
@@ -260,6 +287,9 @@ public class UnifiedIssueWriteService {
         unifiedIssueTicketMapper.updateById(ticket);
     }
 
+    /**
+     * 校验工单存在且当前用户有权访问。
+     */
     private UnifiedIssueTicket requireAccessibleTicket(Long scopedUserId, Long issueId) {
         UnifiedIssueTicket ticket = unifiedIssueTicketMapper.selectById(issueId);
         if (ticket == null) {
@@ -273,10 +303,16 @@ public class UnifiedIssueWriteService {
         return ticket;
     }
 
+    /**
+     * 加载任务主记录。
+     */
     private UnifiedQcTask loadTask(Long taskId) {
         return taskId == null ? null : unifiedQcTaskMapper.selectById(taskId);
     }
 
+    /**
+     * 加载任务结果主记录。
+     */
     private UnifiedQcResult loadResult(UnifiedQcTask task) {
         if (task == null) {
             return null;
@@ -287,10 +323,16 @@ public class UnifiedIssueWriteService {
                 .last("LIMIT 1"));
     }
 
+    /**
+     * 加载任务关联的检查实例。
+     */
     private UnifiedStudy loadStudy(UnifiedQcTask task) {
         return task == null || task.getStudyId() == null ? null : unifiedStudyMapper.selectById(task.getStudyId());
     }
 
+    /**
+     * 新增或更新 CAPA 记录。
+     */
     private void upsertCapaRecord(Long issueId, Long operatorId, IssueWorkflowUpdateReq request) {
         if (issueId == null || request == null || !hasCapaContent(request)) {
             return;
@@ -320,6 +362,9 @@ public class UnifiedIssueWriteService {
         unifiedIssueCapaRecordMapper.updateById(capaRecord);
     }
 
+    /**
+     * 写入工单动作日志。
+     */
     private void insertActionLog(Long ticketId,
                                  Long operatorId,
                                  String actionType,
@@ -338,18 +383,27 @@ public class UnifiedIssueWriteService {
         unifiedIssueActionLogMapper.insert(actionLog);
     }
 
+    /**
+     * 判断规则是否要求跳过自动建单。
+     */
     private boolean shouldSkipIssueCreation(QcRuleConfig appliedRule) {
         return appliedRule != null
                 && (!Boolean.TRUE.equals(appliedRule.getEnabled())
                 || Boolean.FALSE.equals(appliedRule.getAutoCreateIssue()));
     }
 
+    /**
+     * 判断结果是否属于异常结果。
+     */
     private boolean isAbnormalResult(UnifiedQcResult result) {
         return result != null
                 && ("不合格".equals(result.getQcStatus())
                 || (result.getAbnormalCount() != null && result.getAbnormalCount() > 0));
     }
 
+    /**
+     * 构造异步质控任务的工单描述。
+     */
     private String buildQualityTaskDescription(UnifiedQcTask task, UnifiedQcResult result, String issueType) {
         String taskLabel = MockQualityAnalysisSupport.resolveTaskTypeName(task.getTaskTypeCode());
         int abnormalCount = result.getAbnormalCount() == null ? 0 : result.getAbnormalCount();
@@ -361,6 +415,9 @@ public class UnifiedIssueWriteService {
         return taskLabel + "发现异常：“" + issueType + "”，当前质控分为 " + qualityScoreText;
     }
 
+    /**
+     * 解析脑出血工单优先级。
+     */
     private String resolveIssuePriority(String issueType, QcRuleConfig appliedRule) {
         if (appliedRule != null && StringUtils.hasText(appliedRule.getPriority())) {
             return appliedRule.getPriority();
@@ -368,6 +425,9 @@ public class UnifiedIssueWriteService {
         return HemorrhageIssueSupport.resolvePriority(issueType);
     }
 
+    /**
+     * 解析异步质控任务工单优先级。
+     */
     private String resolveQualityTaskPriority(UnifiedQcTask task, UnifiedQcResult result, QcRuleConfig appliedRule) {
         if (appliedRule != null && StringUtils.hasText(appliedRule.getPriority())) {
             return appliedRule.getPriority();
@@ -394,6 +454,9 @@ public class UnifiedIssueWriteService {
         return "低";
     }
 
+    /**
+     * 解析责任角色。
+     */
     private String resolveResponsibleRole(QcRuleConfig appliedRule) {
         if (appliedRule != null && StringUtils.hasText(appliedRule.getResponsibleRole())) {
             return appliedRule.getResponsibleRole();
@@ -401,6 +464,9 @@ public class UnifiedIssueWriteService {
         return "doctor";
     }
 
+    /**
+     * 解析 SLA 小时数。
+     */
     private Integer resolveSlaHours(QcRuleConfig appliedRule) {
         if (appliedRule != null && appliedRule.getSlaHours() != null && appliedRule.getSlaHours() > 0) {
             return appliedRule.getSlaHours();
@@ -408,6 +474,9 @@ public class UnifiedIssueWriteService {
         return 24;
     }
 
+    /**
+     * 校验并解析指派用户 ID。
+     */
     private Long resolveAssigneeUserId(Long assigneeUserId) {
         if (assigneeUserId == null) {
             return null;

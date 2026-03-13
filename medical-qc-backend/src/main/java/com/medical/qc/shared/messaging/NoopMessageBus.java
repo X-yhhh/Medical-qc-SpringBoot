@@ -12,6 +12,7 @@ public class NoopMessageBus implements MessageBus {
 
     @Override
     public boolean send(String destination, Object payload) {
+        // 明确返回 false，通知调用方走本地线程池或同步兜底逻辑。
         return false;
     }
 }

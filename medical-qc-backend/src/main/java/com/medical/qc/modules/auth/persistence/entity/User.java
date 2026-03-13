@@ -4,23 +4,41 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 
+/**
+ * 用户持久化实体。
+ * 数据链路：AuthServiceImpl / SessionUserSupport -> UserMapper -> users 表 -> 控制器脱敏后返回前端。
+ */
 @TableName("users")
 public class User implements Serializable {
+    // 序列化版本号，保证 Session 中缓存用户对象时结构兼容。
     private static final long serialVersionUID = 1L;
 
+    // 用户主键。
     private Long id;
+    // 登录用户名。
     private String username;
+    // 登录邮箱，同时承担全局唯一标识之一。
     private String email;
+    // SHA-256 密码摘要，不保存明文密码。
     private String passwordHash;
+    // 真实姓名，供页面展示和流程追踪。
     private String fullName;
+    // 所属医院。
     private String hospital;
+    // 所属科室或管理单元。
     private String department;
+    // 角色 ID，对应 AuthRole。
     private Integer roleId;
+    // 账号是否启用。
     private Boolean isActive;
+    // 创建时间。
     private LocalDateTime createdAt;
+    // 最近更新时间。
     private LocalDateTime updatedAt;
+    // 历史 token 字段，当前 Session 模式下通常为空。
     private String accessToken;
 
+    // 以下标准访问器供 MyBatis 映射、Session 序列化与控制器脱敏处理复用。
     public Long getId() {
         return id;
     }

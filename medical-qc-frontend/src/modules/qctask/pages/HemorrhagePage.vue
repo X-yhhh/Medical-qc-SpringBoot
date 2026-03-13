@@ -441,8 +441,10 @@ const route = useRoute()
 const router = useRouter()
 
 // --- 状态定义 ---
+// 分析过程相关状态，驱动上传页加载动画和进度展示。
 const analyzing = ref(false)
 const analyzeProgress = ref(0)
+// 上传弹窗、详情弹窗和 PACS 检索弹窗状态。
 const uploadDialogVisible = ref(false)
 const uploadMode = ref('local')
 const uploadFormRef = ref(null)
@@ -453,6 +455,7 @@ const pacsSearchDialogVisible = ref(false)
 const uploadMethodDialogVisible = ref(false)
 
 // --- 结果数据 ---
+// qcItems 是页面主结果列表的数据源，其余字段服务于顶部卡片和详情弹窗。
 const qcItems = ref([])
 const hasHemorrhage = ref(false)
 const hemorrhageProb = ref(0)
@@ -464,14 +467,17 @@ const bboxes = ref([])
 const confidenceLevel = ref('--')
 const imageMeta = ref({ width: 0, height: 0 })
 const recordCreatedAt = ref('')
+// 页面中的固定展示常量。
 const scanRegion = '头颅平扫'
 const scannerModel = '头颅 CT 标准采集设备'
 
 // --- 日志与进度 ---
+// 实时日志用于让用户感知分析链路推进，而不是只看到静态加载条。
 const currentAnalysisStep = ref('准备就绪')
 const analysisLogs = ref([])
 
 // --- 表单数据 ---
+// 上传表单既服务于本地上传，也服务于 PACS 模式下的病例确认。
 const uploadForm = reactive({
   patientName: '',
   patientCode: '',
@@ -481,6 +487,7 @@ const uploadForm = reactive({
   studyDate: '',
 })
 
+// 表单校验规则与后端最小输入要求对齐。
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   patientCode: [{ required: true, message: '请输入患者编号', trigger: 'blur' }],
@@ -514,9 +521,11 @@ const createDefaultPatientInfo = () => ({
 const normalizeInferenceDevice = () => 'cuda'
 
 // --- 患者信息（展示用） ---
+// 顶部患者信息卡片数据源。
 const patientInfo = ref(createDefaultPatientInfo())
 
 // --- 计算属性 ---
+// 风险仪表盘颜色根据是否出血和概率阈值动态切换。
 const scoreColor = computed(() => {
   if (hasHemorrhage.value) return '#F56C6C'
   if (hemorrhageProb.value > 50) return '#E6A23C'
@@ -893,6 +902,7 @@ const applyHemorrhageResult = (resultPayload) => {
     return
   }
 
+  // 后端返回概率为 0~1，页面统一转成百分比。
   const probabilityPercent = Number((resolveNumber(resultPayload.hemorrhage_probability) * 100).toFixed(1))
   const previewUrl = resultPayload.image_base64
     ? `data:image/png;base64,${resultPayload.image_base64}`
@@ -928,6 +938,7 @@ const applyHemorrhageResult = (resultPayload) => {
   uploadForm.age = patientInfo.value.age
   uploadForm.studyDate = patientInfo.value.studyDate === '--' ? '' : patientInfo.value.studyDate
   uploadMode.value = resultPayload.source_mode === 'pacs' ? 'pacs' : 'local'
+  // 组装结果列表，供页面主体和详情弹窗复用。
   qcItems.value = buildQcItems(resultPayload, hemorrhageProb.value)
 }
 
@@ -943,6 +954,7 @@ const loadLatestHemorrhageRecord = async (fallbackPayload = null) => {
     const latestRecord = Array.isArray(response?.data) ? response.data[0] : null
 
     if (latestRecord) {
+      // 历史详情接口返回的字段更完整，因此优先以后端持久化记录为准。
       applyHemorrhageResult(normalizeHemorrhagePayload(latestRecord))
       return
     }
@@ -1008,6 +1020,7 @@ const getBboxStyle = (box) => {
   if (!box || box.length !== 4) return {}
   if (!imageMeta.value.width || !imageMeta.value.height) return {}
 
+  // 后端 bbox 基于像素坐标，页面叠加层需要按图片实际尺寸换算为百分比。
   const [x, y, w, h] = box
   const left = (x / imageMeta.value.width) * 100
   const top = (y / imageMeta.value.height) * 100
@@ -1050,6 +1063,7 @@ const openUploadDialog = (mode = 'local') => {
  */
 const handleDialogFileChange = (file) => {
   const rawFile = file?.raw || null
+  // 与后端校验保持一致，仅允许常见位图格式进入分析流程。
   const isSupportedImage = rawFile && /\.(png|jpg|jpeg|bmp)$/i.test(rawFile.name || '')
 
   if (rawFile && !isSupportedImage) {
@@ -1080,6 +1094,7 @@ const openPacsSearch = () => {
  * 将选中的PACS检查记录信息填充到上传表单
  */
 const handlePacsSelect = (selectedStudy) => {
+  // 从 PACS 列表直接回填患者与检查信息，减少手工录入。
   uploadForm.patientName = selectedStudy.patientName
   uploadForm.patientCode = selectedStudy.patientId
   uploadForm.examId = selectedStudy.accessionNumber
@@ -1137,6 +1152,7 @@ const handleExport = () => {
     return
   }
 
+  // 当前导出逻辑直接在前端拼装文本报告，保证与页面展示保持一致。
   const reportLines = [
     '头部出血 AI 智能检测报告',
     `导出时间：${formatDateTime(new Date())}`,
@@ -1214,6 +1230,7 @@ const submitUpload = async () => {
   }
 
   uploadDialogVisible.value = false
+  // 弹窗通过校验后进入真实分析流程。
   await startAnalysisProcess()
 }
 
@@ -1237,6 +1254,7 @@ const startAnalysisProcess = async () => {
     return
   }
 
+  // 新分析开始前先清空旧结果，避免页面短暂显示旧病例数据。
   qcItems.value = []
   analyzing.value = true
   analyzeProgress.value = 0
@@ -1245,6 +1263,7 @@ const startAnalysisProcess = async () => {
   addLog('正在初始化 AI 引擎...')
   currentAnalysisStep.value = '初始化'
 
+  // 进度条为前端体验型动画，最终结果以后端真实返回为准。
   const progressTimer = setInterval(() => {
     if (analyzeProgress.value < 90) {
       analyzeProgress.value += Math.random() * 2
@@ -1275,6 +1294,7 @@ const startAnalysisProcess = async () => {
     analyzeProgress.value = 100
     currentAnalysisStep.value = '分析完成'
 
+    // 后端直返的 payload 与历史记录结构略有差异，这里先做统一标准化。
     const normalizedPayload = normalizeHemorrhagePayload({
       ...response,
       patientName: resolveText(response?.patient_name, uploadForm.patientName),
@@ -1293,6 +1313,7 @@ const startAnalysisProcess = async () => {
       await router.replace({ path: route.path, query: {} })
     }
 
+    // 真实接口返回成功后，再从历史记录接口回读一次，保证页面和数据库记录完全一致。
     await loadLatestHemorrhageRecord(normalizedPayload)
   } catch (error) {
     clearInterval(progressTimer)
@@ -1309,6 +1330,7 @@ const startAnalysisProcess = async () => {
  * 默认进入页面时保持空白上传态，与其他质控页面一致。
  */
 onMounted(() => {
+  // 支持从其他页面通过 recordId 直接打开指定历史记录。
   const routeRecordId = resolveRouteRecordId()
   if (routeRecordId) {
     loadHemorrhageRecordById(routeRecordId)
@@ -1319,6 +1341,7 @@ onMounted(() => {
 })
 
 watch(() => route.query.recordId, () => {
+  // 同一路由实例内切换 recordId 时，重新加载对应记录。
   const routeRecordId = resolveRouteRecordId()
   if (routeRecordId) {
     loadHemorrhageRecordById(routeRecordId)

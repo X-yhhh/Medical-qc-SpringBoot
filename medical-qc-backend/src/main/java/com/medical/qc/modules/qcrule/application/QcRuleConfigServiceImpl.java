@@ -20,7 +20,9 @@ import java.util.Objects;
  */
 @Service
 public class QcRuleConfigServiceImpl {
+    // DEFAULT 规则用于异常项未命中精确规则时的兜底配置。
     private static final String DEFAULT_ISSUE_TYPE = "DEFAULT";
+    // 统一格式化规则创建/更新时间。
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final QcRuleConfigMapper qcRuleConfigMapper;
@@ -29,7 +31,12 @@ public class QcRuleConfigServiceImpl {
         this.qcRuleConfigMapper = qcRuleConfigMapper;
     }
 
+    /**
+     * 分页查询规则列表。
+     * 数据链路：筛选参数 -> QueryWrapper -> qcrule 表 -> 前端表格/摘要数据。
+     */
     public Map<String, Object> getRulePage(int page, int limit, String keyword, String taskType, Boolean enabled) {
+        // 先归一化分页参数，再执行结构化查询。
         Page<QcRuleConfig> rulePage = new Page<>(normalizePage(page), normalizeLimit(limit));
         QueryWrapper<QcRuleConfig> pageQueryWrapper = buildQueryWrapper(keyword, taskType, enabled);
         pageQueryWrapper.orderByAsc("task_type").orderByAsc("issue_type");
@@ -47,6 +54,9 @@ public class QcRuleConfigServiceImpl {
         return response;
     }
 
+    /**
+     * 新增规则。
+     */
     public Map<String, Object> createRule(Long operatorId, QcRuleConfigSaveReq request) {
         QcRuleConfig entity = buildValidatedEntity(request, null);
         entity.setUpdatedBy(operatorId);
@@ -54,6 +64,9 @@ public class QcRuleConfigServiceImpl {
         return toRuleItem(qcRuleConfigMapper.selectById(entity.getId()));
     }
 
+    /**
+     * 更新规则。
+     */
     public Map<String, Object> updateRule(Long operatorId, Long ruleId, QcRuleConfigSaveReq request) {
         if (ruleId == null) {
             throw new IllegalArgumentException("规则 ID 不能为空");
@@ -72,6 +85,10 @@ public class QcRuleConfigServiceImpl {
         return toRuleItem(qcRuleConfigMapper.selectById(ruleId));
     }
 
+    /**
+     * 解析指定 taskType + issueType 应命中的规则。
+     * 先查精确规则，未命中再回退到 DEFAULT。
+     */
     public QcRuleConfig resolveRule(String taskType, String issueType) {
         String normalizedTaskType = normalizeTaskType(taskType);
         String normalizedIssueType = normalizeText(issueType);
@@ -95,6 +112,9 @@ public class QcRuleConfigServiceImpl {
                 .last("LIMIT 1"));
     }
 
+    /**
+     * 构建列表查询条件。
+     */
     private QueryWrapper<QcRuleConfig> buildQueryWrapper(String keyword, String taskType, Boolean enabled) {
         QueryWrapper<QcRuleConfig> queryWrapper = new QueryWrapper<>();
         String normalizedKeyword = normalizeText(keyword);
@@ -116,6 +136,9 @@ public class QcRuleConfigServiceImpl {
         return queryWrapper;
     }
 
+    /**
+     * 统计规则摘要。
+     */
     private Map<String, Object> buildSummary(List<QcRuleConfig> allRules) {
         long totalRules = allRules.size();
         long enabledRules = allRules.stream().filter(rule -> Boolean.TRUE.equals(rule.getEnabled())).count();
@@ -138,6 +161,9 @@ public class QcRuleConfigServiceImpl {
         return summary;
     }
 
+    /**
+     * 将规则实体映射为前端可直接消费的视图对象。
+     */
     private Map<String, Object> toRuleItem(QcRuleConfig entity) {
         Map<String, Object> item = new HashMap<>();
         item.put("id", entity.getId());
@@ -157,6 +183,9 @@ public class QcRuleConfigServiceImpl {
         return item;
     }
 
+    /**
+     * 校验并构造待保存实体。
+     */
     private QcRuleConfig buildValidatedEntity(QcRuleConfigSaveReq request, Long excludeRuleId) {
         if (request == null) {
             throw new IllegalArgumentException("规则内容不能为空");
@@ -183,6 +212,9 @@ public class QcRuleConfigServiceImpl {
         return entity;
     }
 
+    /**
+     * 校验同一模块下异常项唯一。
+     */
     private void validateUniqueness(String taskType, String issueType, Long excludeRuleId) {
         QueryWrapper<QcRuleConfig> queryWrapper = new QueryWrapper<QcRuleConfig>()
                 .eq("task_type", taskType)
@@ -193,6 +225,9 @@ public class QcRuleConfigServiceImpl {
         }
     }
 
+    /**
+     * 校验优先级枚举。
+     */
     private String resolvePriority(String priority) {
         String normalizedPriority = normalizeText(priority);
         if (!Objects.equals("高", normalizedPriority)
@@ -203,6 +238,9 @@ public class QcRuleConfigServiceImpl {
         return normalizedPriority;
     }
 
+    /**
+     * 校验责任角色枚举。
+     */
     private String resolveResponsibleRole(String responsibleRole) {
         String normalizedRole = normalizeText(responsibleRole);
         if (!Objects.equals("doctor", normalizedRole) && !Objects.equals("admin", normalizedRole)) {
@@ -211,6 +249,9 @@ public class QcRuleConfigServiceImpl {
         return normalizedRole;
     }
 
+    /**
+     * 校验 SLA 范围。
+     */
     private int resolveSlaHours(Integer slaHours) {
         if (slaHours == null || slaHours < 1 || slaHours > 168) {
             throw new IllegalArgumentException("SLA 时限需在 1-168 小时之间");
@@ -218,6 +259,9 @@ public class QcRuleConfigServiceImpl {
         return slaHours;
     }
 
+    /**
+     * 解析模块展示名。
+     */
     private String resolveTaskTypeName(String taskType, String customTaskTypeName) {
         if (StringUtils.hasText(customTaskTypeName)) {
             return customTaskTypeName.trim();
@@ -230,10 +274,16 @@ public class QcRuleConfigServiceImpl {
         return MockQualityAnalysisSupport.resolveTaskTypeName(taskType);
     }
 
+    /**
+     * 将角色编码转换为中文标签。
+     */
     private String resolveRoleLabel(String role) {
         return "admin".equals(role) ? "管理员" : "医生";
     }
 
+    /**
+     * 归一化任务类型，只允许已知模块或 hemorrhage。
+     */
     private String normalizeTaskType(String taskType) {
         String normalizedTaskType = normalizeText(taskType);
         if ("hemorrhage".equals(normalizedTaskType) || MockQualityAnalysisSupport.isSupportedTaskType(normalizedTaskType)) {
@@ -242,6 +292,9 @@ public class QcRuleConfigServiceImpl {
         return null;
     }
 
+    /**
+     * 归一化异常项名称。
+     */
     private String normalizeIssueType(String issueType) {
         String normalizedIssueType = normalizeText(issueType);
         if (normalizedIssueType == null) {
@@ -250,18 +303,30 @@ public class QcRuleConfigServiceImpl {
         return normalizedIssueType;
     }
 
+    /**
+     * 归一化页码。
+     */
     private int normalizePage(int page) {
         return Math.max(page, 1);
     }
 
+    /**
+     * 归一化分页大小。
+     */
     private int normalizeLimit(int limit) {
         return Math.max(1, Math.min(limit, 50));
     }
 
+    /**
+     * 去空格并把空字符串转为 null。
+     */
     private String normalizeText(String value) {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
+    /**
+     * 与 normalizeText 同义，保留给描述字段使用。
+     */
     private String trimToNull(String value) {
         return normalizeText(value);
     }

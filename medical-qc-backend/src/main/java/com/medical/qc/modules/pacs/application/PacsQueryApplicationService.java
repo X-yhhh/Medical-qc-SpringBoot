@@ -14,12 +14,16 @@ import java.util.List;
  */
 @Service
 public class PacsQueryApplicationService {
+    // 具体缓存查询与统一患者信息补齐逻辑由 PacsServiceImpl 负责。
     private final PacsServiceImpl pacsService;
 
     public PacsQueryApplicationService(PacsServiceImpl pacsService) {
         this.pacsService = pacsService;
     }
 
+    /**
+     * 查询 PACS 检查记录。
+     */
     public List<PacsStudyCache> searchStudies(PacsStudySearchQuery query) {
         return pacsService.searchStudies(
                 query.taskType(),

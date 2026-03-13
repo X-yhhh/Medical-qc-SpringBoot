@@ -20,7 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/admin/users")
 public class AdminUserController {
+    // 应用服务负责编排分页查询和用户更新逻辑。
     private final AdminUserApplicationService adminUserApplicationService;
+    // 会话辅助组件负责管理员权限校验。
     private final SessionUserSupport sessionUserSupport;
 
     public AdminUserController(AdminUserApplicationService adminUserApplicationService,
@@ -50,6 +52,7 @@ public class AdminUserController {
             HttpSession session) {
         User currentUser = sessionUserSupport.requireAuthenticatedUser(session);
         sessionUserSupport.requireAdmin(currentUser);
+        // 用户管理页的筛选参数直接透传给应用服务，由服务层统一做分页与角色映射。
         return ResponseEntity.ok(adminUserApplicationService.getUserPage(page, limit, keyword, role, active));
     }
 
@@ -68,6 +71,7 @@ public class AdminUserController {
             HttpSession session) {
         User currentUser = sessionUserSupport.requireAuthenticatedUser(session);
         sessionUserSupport.requireAdmin(currentUser);
+        // 更新接口同时兼容 PATCH 和 PUT，前端按需要发送局部或完整变更。
         return ResponseEntity.ok(adminUserApplicationService.updateUser(currentUser.getId(), userId, request));
     }
 }

@@ -22,7 +22,9 @@ import java.util.List;
 @RequestMapping("/api/v1/pacs")
 public class PacsController {
 
+    // 应用服务负责封装检索参数并调用 PACS 服务。
     private final PacsQueryApplicationService pacsQueryApplicationService;
+    // 会话辅助组件负责登录态与医生权限校验。
     private final SessionUserSupport sessionUserSupport;
 
     public PacsController(PacsQueryApplicationService pacsQueryApplicationService,
@@ -60,7 +62,7 @@ public class PacsController {
         User user = sessionUserSupport.requireAuthenticatedUser(session);
         sessionUserSupport.requireDoctor(user);
 
-        // 查询PACS检查记录
+        // 查询PACS检查记录，并在应用层补齐 taskType 相关上下文。
         List<PacsStudyCache> studies = pacsQueryApplicationService.searchStudies(
                 new PacsStudySearchQuery(
                         taskType,
