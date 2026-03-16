@@ -4,18 +4,20 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
 /**
- * 其余四个质控模块的模拟分析支持类。
+ * 质控任务公共分析支持类。
  *
- * <p>当前仍返回 mock 结果，但会直接生成前端页面可渲染的完整结构：patientInfo + qcItems。</p>
- * <p>后续接入真实算法时，只需替换各任务类型的结果构建逻辑，控制层、MQ 提交与轮询协议可保持不变。</p>
+ * <p>该工具类同时承担两类职责：一是兼容历史 mock/规则结果的生成与解析；二是对不同链路的结果做统一归一化，</p>
+ * <p>保证 patientInfo、qcItems、summary、qcStatus 等字段在写库和查询阶段保持一致。</p>
  */
 public final class MockQualityAnalysisSupport {
+    public static final String TASK_TYPE_HEMORRHAGE = "hemorrhage";
     public static final String TASK_TYPE_HEAD = "head";
     public static final String TASK_TYPE_CHEST_NON_CONTRAST = "chest-non-contrast";
     public static final String TASK_TYPE_CHEST_CONTRAST = "chest-contrast";
@@ -58,6 +60,9 @@ public final class MockQualityAnalysisSupport {
     }
 
     public static String resolveTaskTypeName(String taskType) {
+        if (TASK_TYPE_HEMORRHAGE.equals(taskType)) {
+            return "头部出血检测";
+        }
         if (TASK_TYPE_HEAD.equals(taskType)) {
             return "CT头部平扫质控";
         }
@@ -140,14 +145,17 @@ public final class MockQualityAnalysisSupport {
      * @return 异常项数量
      */
     public static int resolveAbnormalCount(Map<String, Object> result) {
+        List<Map<String, Object>> qcItems = extractQcItems(result);
+        if (!qcItems.isEmpty()) {
+            return resolveFailCount(result) + resolveReviewCount(result);
+        }
+
         Object abnormalCount = extractSummary(result).get("abnormalCount");
         if (abnormalCount instanceof Number number) {
             return Math.max(number.intValue(), 0);
         }
 
-        return (int) extractQcItems(result).stream()
-                .filter(item -> "不合格".equals(item.get("status")))
-                .count();
+        return 0;
     }
 
     /**
@@ -162,7 +170,7 @@ public final class MockQualityAnalysisSupport {
             return number.doubleValue();
         }
 
-        int totalItems = extractQcItems(result).size();
+        int totalItems = resolveTotalCount(result);
         if (totalItems == 0) {
             return 0D;
         }
@@ -177,12 +185,24 @@ public final class MockQualityAnalysisSupport {
      * @return 合格/不合格
      */
     public static String resolveQcStatus(Map<String, Object> result) {
+        if (resolveFailCount(result) > 0) {
+            return "不合格";
+        }
+        if (resolveReviewCount(result) > 0) {
+            return "待人工确认";
+        }
+
         Object qcStatus = extractSummary(result).get("result");
         if (qcStatus instanceof String qcStatusText && !qcStatusText.isBlank()) {
             return qcStatusText.trim();
         }
 
-        return resolveAbnormalCount(result) > 0 ? "不合格" : "合格";
+        // 当结果体缺少任何可验证质控项时，禁止把它默认为“合格”。
+        if (resolveTotalCount(result) == 0) {
+            return "待人工确认";
+        }
+
+        return "合格";
     }
 
     /**
@@ -192,8 +212,16 @@ public final class MockQualityAnalysisSupport {
      * @return 主异常项；若未发现异常则返回“未见明显异常”
      */
     public static String resolvePrimaryIssue(Map<String, Object> result) {
+        if (resolveTotalCount(result) == 0) {
+            return "结果不完整";
+        }
+
+        if (resolveAbnormalCount(result) <= 0) {
+            return "未见明显异常";
+        }
+
         for (Map<String, Object> item : extractQcItems(result)) {
-            if ("不合格".equals(item.get("status"))) {
+            if (!"合格".equals(item.get("status"))) {
                 Object issueName = item.get("name");
                 if (issueName instanceof String issueText && !issueText.isBlank()) {
                     return issueText.trim();
@@ -205,6 +233,138 @@ public final class MockQualityAnalysisSupport {
     }
 
     /**
+     * 从质控结果中解析待人工确认项数量。
+     *
+     * @param result 质控结果
+     * @return 待人工确认项数量
+     */
+    public static int resolveReviewCount(Map<String, Object> result) {
+        List<Map<String, Object>> qcItems = extractQcItems(result);
+        if (!qcItems.isEmpty()) {
+            return (int) qcItems.stream()
+                    .filter(item -> "待人工确认".equals(item.get("status")))
+                    .count();
+        }
+
+        Object reviewCount = extractSummary(result).get("reviewCount");
+        if (reviewCount instanceof Number number) {
+            return Math.max(number.intValue(), 0);
+        }
+        return 0;
+    }
+
+    /**
+     * 从质控结果中解析不合格项数量。
+     *
+     * @param result 质控结果
+     * @return 不合格项数量
+     */
+    public static int resolveFailCount(Map<String, Object> result) {
+        List<Map<String, Object>> qcItems = extractQcItems(result);
+        if (!qcItems.isEmpty()) {
+            return (int) qcItems.stream()
+                    .filter(item -> "不合格".equals(item.get("status")))
+                    .count();
+        }
+
+        Object failCount = extractSummary(result).get("failCount");
+        if (failCount instanceof Number number) {
+            return Math.max(number.intValue(), 0);
+        }
+        return 0;
+    }
+
+    /**
+     * 从质控结果中解析合格项数量。
+     *
+     * @param result 质控结果
+     * @return 合格项数量
+     */
+    public static int resolvePassCount(Map<String, Object> result) {
+        List<Map<String, Object>> qcItems = extractQcItems(result);
+        if (!qcItems.isEmpty()) {
+            return (int) qcItems.stream()
+                    .filter(item -> "合格".equals(item.get("status")))
+                    .count();
+        }
+
+        Object passCount = extractSummary(result).get("passCount");
+        if (passCount instanceof Number number) {
+            return Math.max(number.intValue(), 0);
+        }
+        int totalCount = resolveTotalCount(result);
+        return Math.max(totalCount - resolveAbnormalCount(result), 0);
+    }
+
+    /**
+     * 从质控结果中解析总项数。
+     *
+     * @param result 质控结果
+     * @return 质控项总数
+     */
+    public static int resolveTotalCount(Map<String, Object> result) {
+        List<Map<String, Object>> qcItems = extractQcItems(result);
+        if (!qcItems.isEmpty()) {
+            return qcItems.size();
+        }
+
+        Object totalCount = extractSummary(result).get("totalItems");
+        if (totalCount instanceof Number number) {
+            return Math.max(number.intValue(), 0);
+        }
+        return 0;
+    }
+
+    /**
+     * 基于质控项和结构化字段生成统一摘要，避免旧结果中的 summary 与明细项不一致。
+     *
+     * @param result 原始质控结果
+     * @return 标准化后的摘要
+     */
+    public static Map<String, Object> buildNormalizedSummary(Map<String, Object> result) {
+        Map<String, Object> summary = new LinkedHashMap<>();
+        int totalItems = resolveTotalCount(result);
+        int passCount = resolvePassCount(result);
+        int failCount = resolveFailCount(result);
+        int reviewCount = resolveReviewCount(result);
+        int abnormalCount = failCount + reviewCount;
+        double qualityScore = resolveQualityScore(result);
+        String qcStatus = resolveQcStatus(result);
+        String primaryIssue = resolvePrimaryIssue(result);
+
+        summary.put("totalItems", totalItems);
+        summary.put("passCount", passCount);
+        summary.put("failCount", failCount);
+        summary.put("reviewCount", reviewCount);
+        summary.put("abnormalCount", abnormalCount);
+        summary.put("qualityScore", qualityScore % 1 == 0 ? (int) qualityScore : qualityScore);
+        summary.put("result", qcStatus);
+        summary.put("primaryIssue", primaryIssue);
+        return summary;
+    }
+
+    /**
+     * 归一化整份质控结果载荷，统一补齐 summary、主异常项和顶层状态字段。
+     *
+     * @param result 原始质控结果
+     * @return 标准化后的结果；原对象不会被修改
+     */
+    public static Map<String, Object> normalizeResultPayload(Map<String, Object> result) {
+        if (result == null || result.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Object> normalized = new LinkedHashMap<>(result);
+        Map<String, Object> summary = buildNormalizedSummary(result);
+        normalized.put("summary", summary);
+        normalized.put("qcStatus", summary.get("result"));
+        normalized.put("qualityScore", summary.get("qualityScore"));
+        normalized.put("abnormalCount", summary.get("abnormalCount"));
+        normalized.put("primaryIssue", summary.get("primaryIssue"));
+        return normalized;
+    }
+
+    /**
      * 构建前端页面可直接使用的完整 mock 结果。
      */
     public static Map<String, Object> createMockResult(String taskType,
@@ -212,6 +372,18 @@ public final class MockQualityAnalysisSupport {
                                                        String examId,
                                                        String sourceMode,
                                                        String originalFilename) {
+        return createMockResult(taskType, patientName, examId, sourceMode, originalFilename, Map.of());
+    }
+
+    /**
+     * 构建前端页面可直接使用的完整 mock 结果，并支持任务专属元数据回填。
+     */
+    public static Map<String, Object> createMockResult(String taskType,
+                                                       String patientName,
+                                                       String examId,
+                                                       String sourceMode,
+                                                       String originalFilename,
+                                                       Map<String, Object> metadata) {
         String normalizedSourceMode = normalizeSourceMode(sourceMode);
         if (TASK_TYPE_HEAD.equals(taskType)) {
             return createHeadResult(patientName, examId, normalizedSourceMode, originalFilename);
@@ -223,7 +395,7 @@ public final class MockQualityAnalysisSupport {
             return createChestContrastResult(patientName, examId, normalizedSourceMode, originalFilename);
         }
         if (TASK_TYPE_CORONARY_CTA.equals(taskType)) {
-            return createCoronaryCtaResult(patientName, examId, normalizedSourceMode, originalFilename);
+            return createCoronaryCtaResult(patientName, examId, normalizedSourceMode, originalFilename, metadata);
         }
 
         throw new IllegalArgumentException("不支持的质控任务类型: " + taskType);
@@ -233,7 +405,7 @@ public final class MockQualityAnalysisSupport {
      * 保留一个简版入口，兼容当前仍存在的旧 mock 调用点。
      */
     public static Map<String, Object> createMockResult(String taskType) {
-        return createMockResult(taskType, "匿名患者", "MOCK-EXAM", SOURCE_MODE_LOCAL, "mock-image.dcm");
+        return createMockResult(taskType, "匿名患者", "MOCK-EXAM", SOURCE_MODE_LOCAL, "mock-image.dcm", Map.of());
     }
 
     private static Map<String, Object> createHeadResult(String patientName,
@@ -305,10 +477,37 @@ public final class MockQualityAnalysisSupport {
     private static Map<String, Object> createCoronaryCtaResult(String patientName,
                                                                String examId,
                                                                String sourceMode,
-                                                               String originalFilename) {
+                                                               String originalFilename,
+                                                               Map<String, Object> metadata) {
+        Integer heartRate = parseInteger(metadata == null ? null : metadata.get("heart_rate"));
+        Integer hrVariability = parseInteger(metadata == null ? null : metadata.get("hr_variability"));
+        String reconPhase = normalizeObjectText(metadata == null ? null : metadata.get("recon_phase"));
+        String kvp = normalizeObjectText(metadata == null ? null : metadata.get("kvp"));
+
+        int resolvedHeartRate = heartRate == null ? 64 : heartRate;
+        int resolvedHrVariability = hrVariability == null ? 2 : hrVariability;
+        String resolvedReconPhase = reconPhase == null ? "75% (Diastolic)" : reconPhase;
+        String resolvedKvp = kvp == null ? "100 kV" : kvp;
+
+        boolean heartRateOk = resolvedHeartRate <= 75;
+        boolean hrVariabilityOk = resolvedHrVariability <= 5;
+        boolean ecgGatingOk = normalizeObjectText(resolvedReconPhase) != null;
+
         List<Map<String, Object>> qcItems = new ArrayList<>();
-        qcItems.add(createQcItem("心率控制", "合格", "检查扫描期间平均心率是否符合重建要求", "平均心率 62 bpm (<=75 bpm)"));
-        qcItems.add(createQcItem("心率稳定性", "合格", "检查扫描期间心率波动情况", "心率波动 < 5 bpm"));
+        qcItems.add(createQcItem(
+                "心率控制",
+                heartRateOk ? "合格" : "不合格",
+                "检查扫描期间平均心率是否符合重建要求",
+                heartRateOk
+                        ? ""
+                        : "平均心率 " + resolvedHeartRate + " bpm (>75 bpm)，建议优化心率控制"));
+        qcItems.add(createQcItem(
+                "心率稳定性",
+                hrVariabilityOk ? "合格" : "不合格",
+                "检查扫描期间心率波动情况",
+                hrVariabilityOk
+                        ? ""
+                        : "心率波动 " + resolvedHrVariability + " bpm (>5 bpm)，易影响重建稳定性"));
         qcItems.add(createQcItem("呼吸配合", randomStatus(0.16D), "检查是否存在呼吸运动伪影", "膈肌位置略有漂移，建议加强屏气训练"));
         qcItems.add(createQcItem("血管强化 (AO)", "合格", "升主动脉根部 CT 值", "CT值 380 HU (>=300 HU)"));
         qcItems.add(createQcItem("血管强化 (LAD)", "合格", "左前降支远端 CT 值", "CT值 280 HU (>=250 HU)"));
@@ -316,17 +515,21 @@ public final class MockQualityAnalysisSupport {
         qcItems.add(createQcItem("噪声水平", "合格", "主动脉根部图像噪声 (SD)", "SD = 22 HU (<=30 HU)"));
         qcItems.add(createQcItem("钙化积分影响", randomStatus(0.12D), "严重钙化斑块导致的伪影干扰", "近端钙化较重，局部影响血管腔评估"));
         qcItems.add(createQcItem("台阶伪影", "合格", "因心率不齐或屏气不佳导致的层面错位", "血管连续性良好"));
-        qcItems.add(createQcItem("心电门控", "合格", "ECG 信号同步状态", "R波触发准确"));
+        qcItems.add(createQcItem(
+                "心电门控",
+                ecgGatingOk ? "合格" : "不合格",
+                "ECG 信号同步状态",
+                ecgGatingOk ? "" : "缺少有效心电门控/重建相位信息"));
         qcItems.add(createQcItem("扫描范围", "合格", "覆盖气管分叉至心脏膈面下", "心脏包络完整"));
         qcItems.add(createQcItem("金属/线束伪影", randomStatus(0.2D), "上腔静脉高浓度对比剂或电极片伪影", "上腔静脉硬化伪影干扰 RCA 近段观察"));
 
         Map<String, Object> patientInfo = createBasePatientInfo(patientName, examId, sourceMode, originalFilename);
         patientInfo.put("device", "Philips iCT 256");
         patientInfo.put("sliceThickness", 0.6);
-        patientInfo.put("heartRate", 60 + new Random().nextInt(20));
-        patientInfo.put("hrVariability", new Random().nextInt(4));
-        patientInfo.put("reconPhase", "75% (Diastolic)");
-        patientInfo.put("kVp", "100 kV");
+        patientInfo.put("heartRate", resolvedHeartRate);
+        patientInfo.put("hrVariability", resolvedHrVariability);
+        patientInfo.put("reconPhase", resolvedReconPhase);
+        patientInfo.put("kVp", resolvedKvp);
 
         return createResultEnvelope(TASK_TYPE_CORONARY_CTA, patientInfo, qcItems, 1650);
     }
@@ -407,6 +610,25 @@ public final class MockQualityAnalysisSupport {
     private static String buildAccessionNumber(String sourceMode) {
         String prefix = SOURCE_MODE_PACS.equals(sourceMode) ? "PACS" : "ACC";
         return prefix + (100000 + new Random().nextInt(900000));
+    }
+
+    private static Integer parseInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private static String normalizeObjectText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() || "null".equalsIgnoreCase(text) ? null : text;
     }
 }
 

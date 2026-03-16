@@ -1,15 +1,18 @@
 package com.medical.qc.messaging;
 
 import java.io.Serializable;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
- * mock 质控异步任务消息。
+ * 异步质控任务消息。
  *
- * <p>当前消息统一承载任务类型、来源模式、患者信息、文件信息与提交时间，后续对接真实算法时，消费者可以直接基于该消息继续做：</p>
+ * <p>当前消息统一承载任务类型、来源模式、患者信息、文件信息与提交时间，消费者可直接基于该消息执行：</p>
  * <ul>
  *     <li>本地文件预处理</li>
- *     <li>PACS 模拟或真实调取</li>
+ *     <li>PACS 调取</li>
  *     <li>算法推理与结果持久化</li>
  * </ul>
  */
@@ -28,9 +31,15 @@ public class MockQualityTaskMessage implements Serializable {
     // 患者姓名与检查号。
     private String patientName;
     private String examId;
+    private String patientId;
+    private String gender;
+    private Integer age;
+    private LocalDate studyDate;
     // 原始文件名和已存储文件路径。
     private String originalFilename;
     private String storedFilePath;
+    // 任务专属附加元数据。
+    private Map<String, Object> metadata;
     // 提交时间。
     private LocalDateTime submittedAt;
 
@@ -45,8 +54,13 @@ public class MockQualityTaskMessage implements Serializable {
                                   Long userId,
                                   String patientName,
                                   String examId,
+                                  String patientId,
+                                  String gender,
+                                  Integer age,
+                                  LocalDate studyDate,
                                   String originalFilename,
                                   String storedFilePath,
+                                  Map<String, Object> metadata,
                                   LocalDateTime submittedAt) {
         this.taskId = taskId;
         this.taskType = taskType;
@@ -54,8 +68,13 @@ public class MockQualityTaskMessage implements Serializable {
         this.userId = userId;
         this.patientName = patientName;
         this.examId = examId;
+        this.patientId = patientId;
+        this.gender = gender;
+        this.age = age;
+        this.studyDate = studyDate;
         this.originalFilename = originalFilename;
         this.storedFilePath = storedFilePath;
+        this.metadata = metadata == null ? new HashMap<>() : new HashMap<>(metadata);
         this.submittedAt = submittedAt;
     }
 
@@ -108,6 +127,38 @@ public class MockQualityTaskMessage implements Serializable {
         this.examId = examId;
     }
 
+    public String getPatientId() {
+        return patientId;
+    }
+
+    public void setPatientId(String patientId) {
+        this.patientId = patientId;
+    }
+
+    public String getGender() {
+        return gender;
+    }
+
+    public void setGender(String gender) {
+        this.gender = gender;
+    }
+
+    public Integer getAge() {
+        return age;
+    }
+
+    public void setAge(Integer age) {
+        this.age = age;
+    }
+
+    public LocalDate getStudyDate() {
+        return studyDate;
+    }
+
+    public void setStudyDate(LocalDate studyDate) {
+        this.studyDate = studyDate;
+    }
+
     public String getOriginalFilename() {
         return originalFilename;
     }
@@ -122,6 +173,14 @@ public class MockQualityTaskMessage implements Serializable {
 
     public void setStoredFilePath(String storedFilePath) {
         this.storedFilePath = storedFilePath;
+    }
+
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
+    public void setMetadata(Map<String, Object> metadata) {
+        this.metadata = metadata;
     }
 
     public LocalDateTime getSubmittedAt() {

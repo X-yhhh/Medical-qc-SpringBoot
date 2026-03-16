@@ -1,5 +1,6 @@
 package com.medical.qc.modules.qctask.application.support;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -25,6 +26,11 @@ public class MockQualityTaskSnapshot {
     private String patientName;
     // 检查号。
     private String examId;
+    // 患者补充字段用于统一模型主数据与结果页回填。
+    private String patientId;
+    private String gender;
+    private Integer age;
+    private LocalDate studyDate;
     // 原始文件名，主要用于详情展示。
     private String originalFilename;
     // 已存储文件绝对路径，供任务执行读取。
@@ -105,6 +111,38 @@ public class MockQualityTaskSnapshot {
 
     public void setExamId(String examId) {
         this.examId = examId;
+    }
+
+    public String getPatientId() {
+        return patientId;
+    }
+
+    public void setPatientId(String patientId) {
+        this.patientId = patientId;
+    }
+
+    public String getGender() {
+        return gender;
+    }
+
+    public void setGender(String gender) {
+        this.gender = gender;
+    }
+
+    public Integer getAge() {
+        return age;
+    }
+
+    public void setAge(Integer age) {
+        this.age = age;
+    }
+
+    public LocalDate getStudyDate() {
+        return studyDate;
+    }
+
+    public void setStudyDate(LocalDate studyDate) {
+        this.studyDate = studyDate;
     }
 
     public String getOriginalFilename() {

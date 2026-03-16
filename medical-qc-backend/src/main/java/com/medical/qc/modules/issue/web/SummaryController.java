@@ -8,6 +8,7 @@ import com.medical.qc.modules.issue.application.command.IssueWorkflowUpdateComma
 import com.medical.qc.modules.issue.application.query.IssuePageQuery;
 import com.medical.qc.support.SessionUserSupport;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -122,6 +123,24 @@ public class SummaryController {
                         limit,
                         query,
                         status)));
+    }
+
+    /**
+     * 导出当前筛选条件下的异常工单摘要。
+     */
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> exportIssues(@RequestParam(value = "query", required = false) String query,
+                                               @RequestParam(value = "status", required = false) String status,
+                                               HttpSession session) {
+        User user = sessionUserSupport.requireAuthenticatedUser(session);
+        byte[] payload = issueSummaryApplicationService.exportIssueCsv(
+                sessionUserSupport.resolveScopedUserId(user),
+                query,
+                status);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, "text/csv;charset=UTF-8")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"issues-summary.csv\"")
+                .body(payload);
     }
 
     /**

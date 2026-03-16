@@ -11,7 +11,7 @@ if ($backendListener) {
 }
 
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -like "*model_server.py*" } |
+    Where-Object { $_.CommandLine -like "*inference_server.py*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
 if (Test-Path $backendLog) {

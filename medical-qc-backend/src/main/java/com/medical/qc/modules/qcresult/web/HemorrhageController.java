@@ -7,6 +7,7 @@ import com.medical.qc.modules.qcresult.application.command.HemorrhageAnalysisCom
 import com.medical.qc.support.SessionUserSupport;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,6 +52,20 @@ public class HemorrhageController {
             throw new IllegalArgumentException("历史记录不存在");
         }
         return ResponseEntity.ok(Collections.singletonMap("data", record));
+    }
+
+    /**
+     * 导出单条脑出血检测历史记录的正式报告。
+     */
+    @GetMapping("/hemorrhage/history/{recordId}/report")
+    public ResponseEntity<byte[]> exportHemorrhageHistoryReport(@PathVariable("recordId") Long recordId,
+                                                               HttpSession session) throws IOException {
+        User user = requireDoctorSession(session);
+        byte[] payload = hemorrhageRecordApplicationService.exportHistoryReport(user.getId(), recordId);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"hemorrhage-report-" + recordId + ".docx\"")
+                .body(payload);
     }
 
     /**

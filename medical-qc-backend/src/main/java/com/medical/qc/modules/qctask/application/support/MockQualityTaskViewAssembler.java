@@ -68,7 +68,7 @@ public class MockQualityTaskViewAssembler {
         response.put("taskType", snapshot.getTaskType());
         response.put("taskTypeName", snapshot.getTaskTypeName());
         response.put("status", snapshot.getStatus());
-        response.put("mock", true);
+        response.put("mock", snapshot.isMock());
         response.put("submittedAt", formatDateTime(snapshot.getSubmittedAt()));
         response.put("pollingUrl", "/api/v1/quality/tasks/" + snapshot.getTaskId());
         response.put("message", "质控任务已提交，请轮询任务结果接口");

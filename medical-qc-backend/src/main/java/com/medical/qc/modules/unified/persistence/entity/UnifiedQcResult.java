@@ -30,6 +30,13 @@ public class UnifiedQcResult {
     private String primaryIssueName;
     private String summaryJson;
     private String rawResultJson;
+    // 人工复核、锁定和外部引用信息。
+    private String reviewStatus;
+    private String reviewComment;
+    private Long reviewedBy;
+    private LocalDateTime reviewedAt;
+    private LocalDateTime lockedAt;
+    private String externalRef;
     // 创建与更新时间。
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -150,6 +157,54 @@ public class UnifiedQcResult {
 
     public void setRawResultJson(String rawResultJson) {
         this.rawResultJson = rawResultJson;
+    }
+
+    public String getReviewStatus() {
+        return reviewStatus;
+    }
+
+    public void setReviewStatus(String reviewStatus) {
+        this.reviewStatus = reviewStatus;
+    }
+
+    public String getReviewComment() {
+        return reviewComment;
+    }
+
+    public void setReviewComment(String reviewComment) {
+        this.reviewComment = reviewComment;
+    }
+
+    public Long getReviewedBy() {
+        return reviewedBy;
+    }
+
+    public void setReviewedBy(Long reviewedBy) {
+        this.reviewedBy = reviewedBy;
+    }
+
+    public LocalDateTime getReviewedAt() {
+        return reviewedAt;
+    }
+
+    public void setReviewedAt(LocalDateTime reviewedAt) {
+        this.reviewedAt = reviewedAt;
+    }
+
+    public LocalDateTime getLockedAt() {
+        return lockedAt;
+    }
+
+    public void setLockedAt(LocalDateTime lockedAt) {
+        this.lockedAt = lockedAt;
+    }
+
+    public String getExternalRef() {
+        return externalRef;
+    }
+
+    public void setExternalRef(String externalRef) {
+        this.externalRef = externalRef;
     }
 
     public LocalDateTime getCreatedAt() {

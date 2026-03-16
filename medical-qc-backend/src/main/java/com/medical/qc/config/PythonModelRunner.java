@@ -29,7 +29,7 @@ import java.util.regex.Pattern;
  * Python 模型服务进程管理器。
  *
  * 作用:
- * - 在后端启动时按配置自动启动 python_model/model_server.py
+ * - 在后端启动时按配置自动启动 python_model/inference_server.py
  * - 在后端停止时尽最大努力回收 Python 进程及其子进程，避免端口占用导致 Connection refused
  *
  * 配置:
@@ -38,6 +38,7 @@ import java.util.regex.Pattern;
 public class PythonModelRunner implements CommandLineRunner, DisposableBean {
 
     private static final Logger logger = LoggerFactory.getLogger(PythonModelRunner.class);
+    private static final String MODEL_SERVER_SCRIPT = "inference_server.py";
     // 用于从 netstat 输出中解析监听端口对应的 PID。
     private static final Pattern NETSTAT_PID_PATTERN = Pattern.compile("(\\d+)\\s*$");
     // 当前由后端托管的 Python 模型进程句柄。
@@ -128,7 +129,7 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
         String pythonExe = resolvePythonExecutable(projectDir);
         logger.info("Using Python executable: {}", pythonExe);
 
-        ProcessBuilder pb = new ProcessBuilder(pythonExe, "-u", "model_server.py");
+        ProcessBuilder pb = new ProcessBuilder(pythonExe, "-u", MODEL_SERVER_SCRIPT);
         pb.directory(scriptDir);
         pb.redirectErrorStream(true); // Merge stderr into stdout
         Map<String, String> env = pb.environment();
@@ -321,13 +322,15 @@ public class PythonModelRunner implements CommandLineRunner, DisposableBean {
                     boolean looksLikePythonExecutable = command.toLowerCase(Locale.ROOT).endsWith("python.exe")
                             || command.toLowerCase(Locale.ROOT).endsWith("python");
 
-                    if (!processSummary.contains("model_server.py") && !looksLikePythonExecutable) {
+                    boolean looksLikeManagedModelProcess = processSummary.contains("inference_server.py");
+
+                    if (!looksLikeManagedModelProcess && !looksLikePythonExecutable) {
                         logger.warn("Port {} is occupied by non-model process PID={}, skip cleanup. command={}",
                                 port, pid, processDescriptor);
                         return;
                     }
 
-                    if (!processSummary.contains("model_server.py") && looksLikePythonExecutable) {
+                    if (!looksLikeManagedModelProcess && looksLikePythonExecutable) {
                         logger.info("Port {} is occupied by a Python process with incomplete command metadata, treat PID={} as a stale model process. command={}",
                                 port, pid, processDescriptor);
                     }

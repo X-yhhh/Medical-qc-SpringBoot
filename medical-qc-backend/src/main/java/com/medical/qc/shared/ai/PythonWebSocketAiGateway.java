@@ -57,6 +57,7 @@ public class PythonWebSocketAiGateway implements AiGateway {
                     public void onOpen(ServerHandshake handshakedata) {
                         // WebSocket 建立后立即发送图片路径请求。
                         Map<String, String> request = new HashMap<>();
+                        request.put("task_type", "hemorrhage");
                         request.put("image_path", imagePath);
                         try {
                             send(objectMapper.writeValueAsString(request));
@@ -117,6 +118,106 @@ public class PythonWebSocketAiGateway implements AiGateway {
         }
 
         return Collections.singletonMap("error", "Failed to connect to Python Model Server (Port " + port + ")");
+    }
+
+    @Override
+    public Map<String, Object> analyzeHeadQuality(String volumePath) {
+        return analyzeVolumeTask("head", volumePath, null, "Head CT plain QC inference interrupted", "Head CT plain QC inference timed out");
+    }
+
+    @Override
+    public Map<String, Object> analyzeChestNonContrast(String volumePath) {
+        return analyzeVolumeTask("chest-non-contrast", volumePath, null, "Chest non contrast QC inference interrupted", "Chest non contrast QC inference timed out");
+    }
+
+    @Override
+    public Map<String, Object> analyzeChestContrast(String inputPath, Map<String, Object> metadata) {
+        return analyzeVolumeTask("chest-contrast", inputPath, metadata, "Chest contrast QC inference interrupted", "Chest contrast QC inference timed out");
+    }
+
+    @Override
+    public Map<String, Object> analyzeCoronaryCta(String inputPath, Map<String, Object> metadata) {
+        return analyzeVolumeTask("coronary-cta", inputPath, metadata, "Coronary CTA QC inference interrupted", "Coronary CTA QC inference timed out");
+    }
+
+    private Map<String, Object> analyzeVolumeTask(String taskType,
+                                                  String volumePath,
+                                                  Map<String, Object> metadata,
+                                                  String interruptedMessage,
+                                                  String timeoutMessage) {
+        URI serverUri;
+        try {
+            serverUri = new URI(modelServerUrl);
+        } catch (Exception exception) {
+            return Collections.singletonMap("error", "Invalid python.model_server.url");
+        }
+
+        int port = serverUri.getPort();
+        if (port <= 0) {
+            port = "wss".equalsIgnoreCase(serverUri.getScheme()) ? 443 : 80;
+        }
+
+        CompletableFuture<String> future = new CompletableFuture<>();
+        WebSocketClient client = null;
+        try {
+            client = new WebSocketClient(serverUri) {
+                @Override
+                public void onOpen(ServerHandshake handshakedata) {
+                    Map<String, Object> request = new HashMap<>();
+                    request.put("task_type", taskType);
+                    request.put("volume_path", volumePath);
+                    request.put("input_path", volumePath);
+                    if (metadata != null && !metadata.isEmpty()) {
+                        request.putAll(metadata);
+                    }
+                    try {
+                        send(objectMapper.writeValueAsString(request));
+                    } catch (Exception exception) {
+                        future.completeExceptionally(exception);
+                    }
+                }
+
+                @Override
+                public void onMessage(String message) {
+                    future.complete(message);
+                    close();
+                }
+
+                @Override
+                public void onClose(int code, String reason, boolean remote) {
+                    if (!future.isDone()) {
+                        future.completeExceptionally(new RuntimeException("Connection closed: " + reason));
+                    }
+                }
+
+                @Override
+                public void onError(Exception exception) {
+                    future.completeExceptionally(exception);
+                }
+            };
+
+            if (!client.connectBlocking(5, TimeUnit.SECONDS)) {
+                return Collections.singletonMap("error",
+                        "Failed to connect to Python Model Server (Port " + port + ")");
+            }
+
+            String resultJson = future.get(120, TimeUnit.SECONDS);
+            return JsonObjectMapReader.read(objectMapper, resultJson);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return Collections.singletonMap("error", interruptedMessage);
+        } catch (java.util.concurrent.TimeoutException exception) {
+            return Collections.singletonMap("error", timeoutMessage);
+        } catch (Exception exception) {
+            return Collections.singletonMap("error", exception.getMessage());
+        } finally {
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (Exception ignore) {
+                }
+            }
+        }
     }
 }
 

@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Base64;
+import java.util.List;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -91,7 +92,9 @@ public class HemorrhageResultAssembler {
         // 这些字段供前端结果页和详情弹窗直接消费。
         predictionResult.put("prediction", record.getPrediction());
         predictionResult.put("primary_issue", record.getPrimaryIssue());
+        predictionResult.put("primaryIssue", record.getPrimaryIssue());
         predictionResult.put("qc_status", record.getQcStatus());
+        predictionResult.put("qcStatus", record.getQcStatus());
         predictionResult.put("patient_code", record.getPatientCode());
         predictionResult.put("gender", record.getGender());
         predictionResult.put("age", record.getAge());
@@ -101,6 +104,16 @@ public class HemorrhageResultAssembler {
         predictionResult.put("model_name", MODEL_NAME);
         predictionResult.put("scan_region", SCAN_REGION);
         predictionResult.put("scanner_model", context.scannerModel());
+        predictionResult.put("taskType", "hemorrhage");
+        predictionResult.put("taskTypeName", "头部出血检测");
+        predictionResult.put("mock", false);
+        predictionResult.put("analysisMode", "real-model");
+        predictionResult.put("analysisLabel", "真实模型推理");
+
+        // 脑出血链路也补齐 patientInfo/qcItems/summary，便于统一做结果校验与任务中心展示。
+        predictionResult.put("patientInfo", buildPatientInfo(record, context));
+        predictionResult.put("qcItems", buildQcItems(record));
+        predictionResult.put("summary", buildSummary(record));
     }
 
     /**
@@ -193,6 +206,104 @@ public class HemorrhageResultAssembler {
      */
     private String normalizeText(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    /**
+     * 构造统一患者信息结构，供任务中心、历史详情和前端结果页复用。
+     */
+    private Map<String, Object> buildPatientInfo(HemorrhageRecord record, HemorrhagePreparedContext context) {
+        Map<String, Object> patientInfo = new HashMap<>();
+        patientInfo.put("name", record.getPatientName());
+        patientInfo.put("patientId", record.getPatientCode());
+        patientInfo.put("patientCode", record.getPatientCode());
+        patientInfo.put("studyId", record.getExamId());
+        patientInfo.put("accessionNumber", record.getExamId());
+        patientInfo.put("gender", record.getGender());
+        patientInfo.put("age", record.getAge());
+        patientInfo.put("studyDate", record.getStudyDate() == null ? null : record.getStudyDate().toString());
+        patientInfo.put("device", context.scannerModel());
+        patientInfo.put("sourceMode", context.sourceMode());
+        patientInfo.put("sourceLabel", "pacs".equals(context.sourceMode()) ? "PACS 调取" : "本地上传");
+        patientInfo.put("originalFilename", Paths.get(context.savedImagePath()).getFileName().toString());
+        patientInfo.put("scanRegion", SCAN_REGION);
+        return patientInfo;
+    }
+
+    /**
+     * 把脑出血原始多任务输出转成统一质控项列表。
+     */
+    private List<Map<String, Object>> buildQcItems(HemorrhageRecord record) {
+        return List.of(
+                buildQcItem(
+                        "HEMORRHAGE_DETECTION",
+                        "脑出血检测",
+                        "检测是否存在脑实质内高密度出血灶。",
+                        "出血".equals(record.getPrediction()) ? "不合格" : "合格",
+                        "出血".equals(record.getPrediction())
+                                ? "检测到疑似脑出血表现，请立即复核原始影像。"
+                                : "未检测到明显脑出血表现。"),
+                buildQcItem(
+                        "MIDLINE_SHIFT",
+                        "中线偏移",
+                        "检测脑中线结构是否发生明显偏移。",
+                        Boolean.TRUE.equals(record.getMidlineShift()) ? "不合格" : "合格",
+                        Boolean.TRUE.equals(record.getMidlineShift())
+                                ? defaultText(record.getMidlineDetail(), "检测到中线偏移表现。")
+                                : "中线结构居中。"),
+                buildQcItem(
+                        "VENTRICLE_STRUCTURE",
+                        "脑室结构",
+                        "检测脑室系统形态及密度是否存在异常。",
+                        Boolean.TRUE.equals(record.getVentricleIssue()) ? "不合格" : "合格",
+                        Boolean.TRUE.equals(record.getVentricleIssue())
+                                ? defaultText(record.getVentricleDetail(), "检测到脑室结构异常。")
+                                : "脑室系统形态正常。"));
+    }
+
+    /**
+     * 依据统一质控项重建摘要，避免页面和历史记录再各自推导一遍。
+     */
+    private Map<String, Object> buildSummary(HemorrhageRecord record) {
+        List<Map<String, Object>> qcItems = buildQcItems(record);
+        int failCount = (int) qcItems.stream().filter(item -> "不合格".equals(item.get("status"))).count();
+        int abnormalCount = failCount;
+        int totalItems = qcItems.size();
+        int qualityScore = totalItems == 0 ? 0 : (int) Math.round((totalItems - abnormalCount) * 100.0D / totalItems);
+
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("totalItems", totalItems);
+        summary.put("abnormalCount", abnormalCount);
+        summary.put("failCount", failCount);
+        summary.put("reviewCount", 0);
+        summary.put("qualityScore", qualityScore);
+        summary.put("result", record.getQcStatus());
+        summary.put("primaryIssue", record.getPrimaryIssue());
+        return summary;
+    }
+
+    /**
+     * 统一构造脑出血检测的单个质控项。
+     */
+    private Map<String, Object> buildQcItem(String key,
+                                            String name,
+                                            String description,
+                                            String status,
+                                            String detail) {
+        Map<String, Object> qcItem = new HashMap<>();
+        qcItem.put("key", key);
+        qcItem.put("name", name);
+        qcItem.put("description", description);
+        qcItem.put("status", status);
+        qcItem.put("detail", detail);
+        return qcItem;
+    }
+
+    /**
+     * 返回第一个可用文案。
+     */
+    private String defaultText(String value, String fallback) {
+        String normalizedValue = normalizeText(value);
+        return normalizedValue == null ? fallback : normalizedValue;
     }
 }
 

@@ -1,8 +1,8 @@
 package com.medical.qc.modules.pacs.application;
 
 import com.medical.qc.modules.pacs.model.PacsStudyCache;
-import com.medical.qc.modules.pacs.persistence.mapper.PacsStudyMapper;
-import com.medical.qc.modules.unified.application.UnifiedPatientInfoQueryService;
+import com.medical.qc.modules.pacs.application.support.TaskScopedPacsStudyStorageService;
+import com.medical.qc.modules.patient.application.support.TaskScopedPatientInfoStorageService;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -11,20 +11,20 @@ import java.util.List;
 
 /**
  * PACS服务实现类
- * 当前为模拟实现，从pacs_study_cache表查询数据
+ * 当前为模拟实现，从任务专属 PACS 缓存表查询数据
  * 后续对接真实PACS时，可替换为DICOM C-FIND或DICOMweb查询
  */
 @Service
 public class PacsServiceImpl {
-    // 当前 PACS 检索仍基于缓存表实现，后续可替换为真实 PACS 适配器。
-    private final PacsStudyMapper pacsStudyMapper;
-    // 查询统一患者主数据，用于把已维护的患者信息补回 PACS 列表。
-    private final UnifiedPatientInfoQueryService unifiedPatientInfoQueryService;
+    // 各任务类型的 PACS 检索统一路由到任务专属缓存表。
+    private final TaskScopedPacsStudyStorageService taskScopedPacsStudyStorageService;
+    // 患者缓存补齐也按任务专属表读取。
+    private final TaskScopedPatientInfoStorageService taskScopedPatientInfoStorageService;
 
-    public PacsServiceImpl(PacsStudyMapper pacsStudyMapper,
-                           UnifiedPatientInfoQueryService unifiedPatientInfoQueryService) {
-        this.pacsStudyMapper = pacsStudyMapper;
-        this.unifiedPatientInfoQueryService = unifiedPatientInfoQueryService;
+    public PacsServiceImpl(TaskScopedPacsStudyStorageService taskScopedPacsStudyStorageService,
+                           TaskScopedPatientInfoStorageService taskScopedPatientInfoStorageService) {
+        this.taskScopedPacsStudyStorageService = taskScopedPacsStudyStorageService;
+        this.taskScopedPatientInfoStorageService = taskScopedPatientInfoStorageService;
     }
 
     /**
@@ -44,8 +44,9 @@ public class PacsServiceImpl {
                                               String patientName,
                                               String accessionNumber, LocalDate startDate,
                                               LocalDate endDate) {
-        // 先查缓存表，再把统一患者主数据中的补录字段覆写到结果里。
-        List<PacsStudyCache> studies = pacsStudyMapper.searchStudiesFromCache(
+        // 先查任务专属 PACS 表，再把任务专属患者缓存表中的补录字段覆写到结果里。
+        List<PacsStudyCache> studies = taskScopedPacsStudyStorageService.searchStudies(
+                taskType,
                 normalizeText(patientId),
                 normalizeText(patientName),
                 normalizeText(accessionNumber),
@@ -63,8 +64,8 @@ public class PacsServiceImpl {
             return;
         }
 
-        // 检查号是 PACS 记录与统一患者档案的主关联键。
-        var patientInfo = unifiedPatientInfoQueryService.getByAccessionNumber(taskType, study.getAccessionNumber());
+        // 检查号是 PACS 记录与任务专属患者缓存的主关联键。
+        var patientInfo = taskScopedPatientInfoStorageService.getByAccessionNumber(taskType, study.getAccessionNumber());
         if (patientInfo == null) {
             return;
         }
@@ -86,6 +87,36 @@ public class PacsServiceImpl {
         }
         if (StringUtils.hasText(patientInfo.getImagePath())) {
             study.setPatientImagePath(patientInfo.getImagePath());
+        }
+        if (patientInfo.getHeartRate() != null) {
+            study.setHeartRate(patientInfo.getHeartRate());
+        }
+        if (patientInfo.getHrVariability() != null) {
+            study.setHrVariability(patientInfo.getHrVariability());
+        }
+        if (StringUtils.hasText(patientInfo.getReconPhase())) {
+            study.setReconPhase(patientInfo.getReconPhase());
+        }
+        if (StringUtils.hasText(patientInfo.getKVp())) {
+            study.setKvp(patientInfo.getKVp());
+        }
+        if (patientInfo.getFlowRate() != null) {
+            study.setFlowRate(patientInfo.getFlowRate());
+        }
+        if (patientInfo.getContrastVolume() != null) {
+            study.setContrastVolume(patientInfo.getContrastVolume());
+        }
+        if (StringUtils.hasText(patientInfo.getInjectionSite())) {
+            study.setInjectionSite(patientInfo.getInjectionSite());
+        }
+        if (patientInfo.getSliceThickness() != null) {
+            study.setSliceThickness(patientInfo.getSliceThickness());
+        }
+        if (patientInfo.getBolusTrackingHu() != null) {
+            study.setBolusTrackingHu(patientInfo.getBolusTrackingHu());
+        }
+        if (patientInfo.getScanDelaySec() != null) {
+            study.setScanDelaySec(patientInfo.getScanDelaySec());
         }
     }
 

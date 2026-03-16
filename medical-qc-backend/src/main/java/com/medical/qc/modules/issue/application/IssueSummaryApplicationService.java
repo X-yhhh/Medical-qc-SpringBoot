@@ -3,6 +3,7 @@ package com.medical.qc.modules.issue.application;
 import com.medical.qc.modules.issue.application.command.IssueStatusUpdateCommand;
 import com.medical.qc.modules.issue.application.command.IssueWorkflowUpdateCommand;
 import com.medical.qc.modules.issue.application.query.IssuePageQuery;
+import com.medical.qc.modules.qctask.application.support.QualityTaskReportService;
 import com.medical.qc.modules.unified.application.UnifiedIssueQueryService;
 import org.springframework.stereotype.Service;
 
@@ -20,11 +21,15 @@ public class IssueSummaryApplicationService {
     private final IssueServiceImpl issueService;
     // 聚合查询全部走统一模型查询服务，保证页面统计口径一致。
     private final UnifiedIssueQueryService unifiedIssueQueryService;
+    // 服务端导出统一复用报告服务中的 CSV 生成能力。
+    private final QualityTaskReportService qualityTaskReportService;
 
     public IssueSummaryApplicationService(IssueServiceImpl issueService,
-                                          UnifiedIssueQueryService unifiedIssueQueryService) {
+                                          UnifiedIssueQueryService unifiedIssueQueryService,
+                                          QualityTaskReportService qualityTaskReportService) {
         this.issueService = issueService;
         this.unifiedIssueQueryService = unifiedIssueQueryService;
+        this.qualityTaskReportService = qualityTaskReportService;
     }
 
     /**
@@ -95,5 +100,13 @@ public class IssueSummaryApplicationService {
                 command.operatorId(),
                 command.issueId(),
                 command.requestBody());
+    }
+
+    /**
+     * 导出异常工单摘要。
+     */
+    public byte[] exportIssueCsv(Long scopedUserId, String query, String status) {
+        return qualityTaskReportService.buildIssueCsv(
+                unifiedIssueQueryService.getIssueItems(scopedUserId, query, status));
     }
 }

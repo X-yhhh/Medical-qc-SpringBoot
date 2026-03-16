@@ -34,7 +34,12 @@ public class QualityTaskApplicationService {
                 command.file(),
                 command.patientName(),
                 command.examId(),
+                command.patientId(),
+                command.gender(),
+                command.age(),
+                command.studyDate(),
                 command.sourceMode(),
+                command.metadata(),
                 command.user());
     }
 

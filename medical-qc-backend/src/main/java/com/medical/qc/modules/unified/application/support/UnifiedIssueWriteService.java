@@ -74,8 +74,13 @@ public class UnifiedIssueWriteService {
     public void syncHemorrhageIssue(Long taskId) {
         UnifiedQcTask task = loadTask(taskId);
         UnifiedQcResult result = loadResult(task);
-        // 仅不合格或存在异常项的结果才需要建单。
-        if (task == null || result == null || !isAbnormalResult(result)) {
+        if (task == null || result == null) {
+            return;
+        }
+
+        // 结果恢复正常时自动关闭旧工单，避免历史修复后仍残留待处理工单。
+        if (!isAbnormalResult(result)) {
+            autoResolveTicketIfPresent(task, result, "质控结果已恢复正常，系统自动关闭异常工单");
             return;
         }
 
@@ -107,7 +112,12 @@ public class UnifiedIssueWriteService {
     public void syncQualityTaskIssue(Long taskId) {
         UnifiedQcTask task = loadTask(taskId);
         UnifiedQcResult result = loadResult(task);
-        if (task == null || result == null || !isAbnormalResult(result)) {
+        if (task == null || result == null) {
+            return;
+        }
+
+        if (!isAbnormalResult(result)) {
+            autoResolveTicketIfPresent(task, result, "质控结果已恢复正常，系统自动关闭异常工单");
             return;
         }
 
@@ -288,6 +298,34 @@ public class UnifiedIssueWriteService {
     }
 
     /**
+     * 若任务结果恢复正常，则自动关闭已存在的异常工单。
+     */
+    private void autoResolveTicketIfPresent(UnifiedQcTask task,
+                                            UnifiedQcResult result,
+                                            String remark) {
+        if (task == null) {
+            return;
+        }
+
+        UnifiedIssueTicket ticket = unifiedIssueTicketMapper.selectOne(new QueryWrapper<UnifiedIssueTicket>()
+                .eq("task_id", task.getId())
+                .last("LIMIT 1"));
+        if (ticket == null || STATUS_RESOLVED.equals(ticket.getStatus())) {
+            return;
+        }
+
+        LocalDateTime now = firstNonNull(result == null ? null : result.getUpdatedAt(), LocalDateTime.now());
+        String beforeStatus = ticket.getStatus();
+        ticket.setResultId(result == null ? ticket.getResultId() : result.getId());
+        ticket.setStatus(STATUS_RESOLVED);
+        ticket.setLastRemark(remark);
+        ticket.setUpdatedAt(now);
+        ticket.setResolvedAt(now);
+        unifiedIssueTicketMapper.updateById(ticket);
+        insertActionLog(ticket.getId(), task.getSubmittedBy(), "auto_resolve", beforeStatus, STATUS_RESOLVED, remark, now);
+    }
+
+    /**
      * 校验工单存在且当前用户有权访问。
      */
     private UnifiedIssueTicket requireAccessibleTicket(Long scopedUserId, Long issueId) {
@@ -397,7 +435,7 @@ public class UnifiedIssueWriteService {
      */
     private boolean isAbnormalResult(UnifiedQcResult result) {
         return result != null
-                && ("不合格".equals(result.getQcStatus())
+                && (("不合格".equals(result.getQcStatus()) || "待人工确认".equals(result.getQcStatus()))
                 || (result.getAbnormalCount() != null && result.getAbnormalCount() > 0));
     }
 
@@ -410,9 +448,9 @@ public class UnifiedIssueWriteService {
         String qualityScoreText = result.getQualityScore() == null ? "--" : String.valueOf(result.getQualityScore().doubleValue());
 
         if (abnormalCount > 1) {
-            return taskLabel + "发现 " + abnormalCount + " 项异常，主异常为“" + issueType + "”，当前质控分为 " + qualityScoreText;
+            return taskLabel + "发现 " + abnormalCount + " 项异常/待复核项，主异常为“" + issueType + "”，当前质控分为 " + qualityScoreText;
         }
-        return taskLabel + "发现异常：“" + issueType + "”，当前质控分为 " + qualityScoreText;
+        return taskLabel + "发现异常/待复核项：“" + issueType + "”，当前质控分为 " + qualityScoreText;
     }
 
     /**
@@ -490,15 +528,16 @@ public class UnifiedIssueWriteService {
     }
 
     private Map<String, Object> toAssignableUser(User user) {
-        return Map.of(
-                "id", user.getId(),
-                "username", user.getUsername(),
-                "fullName", user.getFullName(),
-                "displayName", resolveUserDisplayName(user),
-                "role", AuthRole.fromRoleId(user.getRoleId()).getCode(),
-                "roleLabel", AuthRole.fromRoleId(user.getRoleId()).getDisplayName(),
-                "department", user.getDepartment(),
-                "hospital", user.getHospital());
+        Map<String, Object> item = new java.util.HashMap<>();
+        item.put("id", user.getId());
+        item.put("username", user.getUsername());
+        item.put("fullName", user.getFullName());
+        item.put("displayName", resolveUserDisplayName(user));
+        item.put("role", AuthRole.fromRoleId(user.getRoleId()).getCode());
+        item.put("roleLabel", AuthRole.fromRoleId(user.getRoleId()).getDisplayName());
+        item.put("department", user.getDepartment());
+        item.put("hospital", user.getHospital());
+        return item;
     }
 
     private String resolveUserDisplayName(User user) {

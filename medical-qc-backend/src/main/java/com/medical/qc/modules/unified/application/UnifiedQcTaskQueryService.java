@@ -2,16 +2,21 @@ package com.medical.qc.modules.unified.application;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.medical.qc.modules.auth.persistence.entity.User;
+import com.medical.qc.modules.auth.persistence.mapper.UserMapper;
 import com.medical.qc.modules.qctask.model.QcTaskRecord;
 import com.medical.qc.modules.unified.application.support.UnifiedQualityTaskWriteService;
+import com.medical.qc.modules.unified.persistence.entity.UnifiedQcResultAuditLog;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedQcResult;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedQcResultItem;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedQcTask;
+import com.medical.qc.modules.unified.persistence.mapper.UnifiedQcResultAuditLogMapper;
 import com.medical.qc.modules.unified.persistence.mapper.UnifiedQcResultItemMapper;
 import com.medical.qc.modules.unified.persistence.mapper.UnifiedQcResultMapper;
 import com.medical.qc.modules.unified.persistence.mapper.UnifiedQcTaskMapper;
 import com.medical.qc.shared.JsonObjectMapReader;
 import com.medical.qc.support.MockQualityAnalysisSupport;
+import com.medical.qc.support.TaskScopedSourceTableSupport;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -34,20 +39,29 @@ public class UnifiedQcTaskQueryService {
 
     private final UnifiedQcTaskMapper unifiedQcTaskMapper;
     private final UnifiedQcResultMapper unifiedQcResultMapper;
+    private final UnifiedQcResultAuditLogMapper unifiedQcResultAuditLogMapper;
     private final UnifiedQcResultItemMapper unifiedQcResultItemMapper;
     private final UnifiedQualityTaskWriteService unifiedQualityTaskWriteService;
+    private final UserMapper userMapper;
     private final ObjectMapper objectMapper;
+    private final TaskScopedSourceTableSupport taskScopedSourceTableSupport;
 
     public UnifiedQcTaskQueryService(UnifiedQcTaskMapper unifiedQcTaskMapper,
                                      UnifiedQcResultMapper unifiedQcResultMapper,
+                                     UnifiedQcResultAuditLogMapper unifiedQcResultAuditLogMapper,
                                      UnifiedQcResultItemMapper unifiedQcResultItemMapper,
                                      UnifiedQualityTaskWriteService unifiedQualityTaskWriteService,
-                                     ObjectMapper objectMapper) {
+                                     UserMapper userMapper,
+                                     ObjectMapper objectMapper,
+                                     TaskScopedSourceTableSupport taskScopedSourceTableSupport) {
         this.unifiedQcTaskMapper = unifiedQcTaskMapper;
         this.unifiedQcResultMapper = unifiedQcResultMapper;
+        this.unifiedQcResultAuditLogMapper = unifiedQcResultAuditLogMapper;
         this.unifiedQcResultItemMapper = unifiedQcResultItemMapper;
         this.unifiedQualityTaskWriteService = unifiedQualityTaskWriteService;
+        this.userMapper = userMapper;
         this.objectMapper = objectMapper;
+        this.taskScopedSourceTableSupport = taskScopedSourceTableSupport;
     }
 
     /**
@@ -117,6 +131,7 @@ public class UnifiedQcTaskQueryService {
         response.put("originalFilename", taskRecord.getOriginalFilename());
         response.put("storedFilePath", taskRecord.getStoredFilePath());
         response.put("result", parsedRawResult);
+        response.put("auditLogs", buildAuditLogs(task.getId()));
         return response;
     }
 
@@ -170,12 +185,23 @@ public class UnifiedQcTaskQueryService {
         item.put("examId", taskRecord.getExamId());
         item.put("sourceMode", taskRecord.getSourceMode());
         item.put("sourceModeLabel", resolveSourceModeLabel(taskRecord.getSourceMode()));
+        item.put("sourceCacheTable", resolveSourceCacheTable(taskRecord.getTaskType(), taskRecord.getSourceMode()));
         item.put("status", taskRecord.getTaskStatus());
         item.put("mock", Boolean.TRUE.equals(taskRecord.getMock()));
+        item.put("analysisMode", resolveAnalysisMode(taskRecord));
+        item.put("analysisLabel", resolveAnalysisLabel(taskRecord));
         item.put("qcStatus", taskRecord.getQcStatus());
         item.put("qualityScore", taskRecord.getQualityScore() == null ? null : taskRecord.getQualityScore().doubleValue());
         item.put("abnormalCount", taskRecord.getAbnormalCount());
         item.put("primaryIssue", taskRecord.getPrimaryIssue());
+        item.put("reviewStatus", firstNonBlank(taskRecord.getReviewStatus(), "PENDING"));
+        item.put("reviewComment", taskRecord.getReviewComment());
+        item.put("reviewedBy", taskRecord.getReviewedBy());
+        item.put("reviewedByName", resolveUserDisplayName(taskRecord.getReviewedBy()));
+        item.put("reviewedAt", formatDateTime(taskRecord.getReviewedAt()));
+        item.put("lockedAt", formatDateTime(taskRecord.getLockedAt()));
+        item.put("device", taskRecord.getDevice());
+        item.put("externalRef", taskRecord.getExternalRef());
         item.put("submittedAt", formatDateTime(taskRecord.getSubmittedAt()));
         item.put("startedAt", formatDateTime(taskRecord.getStartedAt()));
         item.put("completedAt", formatDateTime(taskRecord.getCompletedAt()));
@@ -236,20 +262,43 @@ public class UnifiedQcTaskQueryService {
             return qcItem;
         }).toList();
 
+        long reviewCount = items.stream()
+                .filter(item -> "待人工确认".equals(item.getItemStatus()))
+                .count();
+        long failCount = items.stream()
+                .filter(item -> item.getItemStatus() != null
+                        && !"合格".equals(item.getItemStatus())
+                        && !"待人工确认".equals(item.getItemStatus()))
+                .count();
+        String primaryIssue = items.stream()
+                .filter(item -> item.getItemStatus() != null && !"合格".equals(item.getItemStatus()))
+                .map(UnifiedQcResultItem::getItemName)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(taskRecord.getPrimaryIssue());
+
         Map<String, Object> patientInfo = new HashMap<>();
         patientInfo.put("name", taskRecord.getPatientName());
         patientInfo.put("studyId", taskRecord.getExamId());
         patientInfo.put("sourceLabel", resolveSourceModeLabel(taskRecord.getSourceMode()));
+        patientInfo.put("sourceCacheTable", resolveSourceCacheTable(taskRecord.getTaskType(), taskRecord.getSourceMode()));
         patientInfo.put("accessionNumber", taskRecord.getExamId());
 
         Map<String, Object> summary = new HashMap<>();
         summary.put("qualityScore", taskRecord.getQualityScore() == null ? null : taskRecord.getQualityScore().doubleValue());
         summary.put("abnormalCount", taskRecord.getAbnormalCount() == null ? 0 : taskRecord.getAbnormalCount());
+        summary.put("reviewCount", reviewCount);
+        summary.put("failCount", failCount);
+        summary.put("primaryIssue", primaryIssue);
+        summary.put("result", taskRecord.getQcStatus());
 
         Map<String, Object> fallback = new HashMap<>();
         fallback.put("patientInfo", patientInfo);
         fallback.put("summary", summary);
         fallback.put("qcItems", qcItems);
+        fallback.put("mock", Boolean.TRUE.equals(taskRecord.getMock()));
+        fallback.put("analysisMode", resolveAnalysisMode(taskRecord));
+        fallback.put("analysisLabel", resolveAnalysisLabel(taskRecord));
         return fallback;
     }
 
@@ -299,6 +348,74 @@ public class UnifiedQcTaskQueryService {
     }
 
     /**
+     * 解析任务分析模式，供任务中心列表与详情显式区分 real/mock。
+     */
+    private String resolveAnalysisMode(QcTaskRecord taskRecord) {
+        if (taskRecord == null) {
+            return null;
+        }
+        if (Boolean.TRUE.equals(taskRecord.getMock())) {
+            return "mock-rule-based";
+        }
+        if (MockQualityAnalysisSupport.TASK_TYPE_HEAD.equals(taskRecord.getTaskType())
+                || MockQualityAnalysisSupport.TASK_TYPE_CHEST_NON_CONTRAST.equals(taskRecord.getTaskType())) {
+            return "real-model";
+        }
+        return null;
+    }
+
+    /**
+     * 解析任务分析模式中文标签。
+     */
+    private String resolveAnalysisLabel(QcTaskRecord taskRecord) {
+        String analysisMode = resolveAnalysisMode(taskRecord);
+        if ("mock-rule-based".equals(analysisMode)) {
+            return "模拟分析（规则辅助）";
+        }
+        if ("real-model".equals(analysisMode)) {
+            return "真实模型推理";
+        }
+        return null;
+    }
+
+    /**
+     * 组装任务审计日志列表。
+     */
+    private List<Map<String, Object>> buildAuditLogs(Long taskId) {
+        if (taskId == null) {
+            return List.of();
+        }
+        return unifiedQcResultAuditLogMapper.selectList(new QueryWrapper<UnifiedQcResultAuditLog>()
+                        .eq("task_id", taskId)
+                        .orderByDesc("created_at"))
+                .stream()
+                .map(log -> {
+                    Map<String, Object> item = new HashMap<>();
+                    item.put("id", log.getId());
+                    item.put("actionType", log.getActionType());
+                    item.put("comment", log.getActionComment());
+                    item.put("operatorId", log.getOperatorId());
+                    item.put("operatorName", resolveUserDisplayName(log.getOperatorId()));
+                    item.put("createdAt", formatDateTime(log.getCreatedAt()));
+                    item.put("payload", parseJson(log.getPayloadJson()));
+                    return item;
+                })
+                .toList();
+    }
+
+    /**
+     * 解析任务对应的来源缓存表。
+     */
+    private String resolveSourceCacheTable(String taskType, String sourceMode) {
+        if (!StringUtils.hasText(taskType)) {
+            return null;
+        }
+        return "pacs".equals(sourceMode)
+                ? taskScopedSourceTableSupport.resolvePacsTableLabel(taskType)
+                : taskScopedSourceTableSupport.resolvePatientInfoTableLabel(taskType);
+    }
+
+    /**
      * 统一格式化时间字段。
      */
     private String formatDateTime(LocalDateTime value) {
@@ -318,6 +435,23 @@ public class UnifiedQcTaskQueryService {
             }
         }
         return null;
+    }
+
+    /**
+     * 解析用户展示名。
+     */
+    private String resolveUserDisplayName(Long userId) {
+        if (userId == null) {
+            return "--";
+        }
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            return "--";
+        }
+        if (StringUtils.hasText(user.getFullName())) {
+            return user.getFullName().trim();
+        }
+        return StringUtils.hasText(user.getUsername()) ? user.getUsername().trim() : "--";
     }
 
     /**

@@ -2,6 +2,7 @@ package com.medical.qc.modules.qcresult.application;
 
 import com.medical.qc.modules.qcresult.model.HemorrhageRecord;
 import com.medical.qc.modules.qcresult.application.command.HemorrhageAnalysisCommand;
+import com.medical.qc.modules.qctask.application.support.QualityTaskReportService;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -18,9 +19,13 @@ import java.util.Map;
 public class HemorrhageRecordApplicationService {
     // 旧有脑出血业务逻辑集中在 QualityServiceImpl，这里作为应用层入口进行隔离。
     private final QualityServiceImpl qualityService;
+    // 正式报告导出统一复用任务报告服务。
+    private final QualityTaskReportService qualityTaskReportService;
 
-    public HemorrhageRecordApplicationService(QualityServiceImpl qualityService) {
+    public HemorrhageRecordApplicationService(QualityServiceImpl qualityService,
+                                             QualityTaskReportService qualityTaskReportService) {
         this.qualityService = qualityService;
+        this.qualityTaskReportService = qualityTaskReportService;
     }
 
     /**
@@ -51,6 +56,17 @@ public class HemorrhageRecordApplicationService {
                 command.age(),
                 command.studyDate(),
                 command.sourceMode());
+    }
+
+    /**
+     * 导出单条脑出血历史记录的正式报告。
+     */
+    public byte[] exportHistoryReport(Long userId, Long recordId) throws IOException {
+        HemorrhageRecord record = qualityService.getHistoryRecord(userId, recordId);
+        if (record == null) {
+            throw new IllegalArgumentException("历史记录不存在");
+        }
+        return qualityTaskReportService.buildHemorrhageReportDocx(record);
     }
 }
 

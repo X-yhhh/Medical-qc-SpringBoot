@@ -2,7 +2,6 @@ package com.medical.qc.modules.pacs.model;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -10,9 +9,8 @@ import java.time.LocalTime;
 
 /**
  * PACS检查记录缓存实体类
- * 用于存储从PACS系统查询到的检查记录
+ * 用于承载任务专属 PACS 缓存表查询结果。
  */
-@TableName("pacs_study_cache")
 public class PacsStudyCache {
 
     /** 主键ID */
@@ -69,6 +67,20 @@ public class PacsStudyCache {
 
     /** 统一患者主数据补齐后的预览图片路径 */
     private String patientImagePath;
+
+    /** 胸部增强扩展采集参数 */
+    private Double flowRate;
+    private Integer contrastVolume;
+    private String injectionSite;
+    private Double sliceThickness;
+    private Integer bolusTrackingHu;
+    private Integer scanDelaySec;
+
+    /** 冠脉CTA扩展采集参数 */
+    private Integer heartRate;
+    private Integer hrVariability;
+    private String reconPhase;
+    private String kvp;
 
     /** 缓存创建时间 */
     private LocalDateTime createdAt;
@@ -218,6 +230,86 @@ public class PacsStudyCache {
 
     public void setPatientImagePath(String patientImagePath) {
         this.patientImagePath = patientImagePath;
+    }
+
+    public Double getFlowRate() {
+        return flowRate;
+    }
+
+    public void setFlowRate(Double flowRate) {
+        this.flowRate = flowRate;
+    }
+
+    public Integer getContrastVolume() {
+        return contrastVolume;
+    }
+
+    public void setContrastVolume(Integer contrastVolume) {
+        this.contrastVolume = contrastVolume;
+    }
+
+    public String getInjectionSite() {
+        return injectionSite;
+    }
+
+    public void setInjectionSite(String injectionSite) {
+        this.injectionSite = injectionSite;
+    }
+
+    public Double getSliceThickness() {
+        return sliceThickness;
+    }
+
+    public void setSliceThickness(Double sliceThickness) {
+        this.sliceThickness = sliceThickness;
+    }
+
+    public Integer getBolusTrackingHu() {
+        return bolusTrackingHu;
+    }
+
+    public void setBolusTrackingHu(Integer bolusTrackingHu) {
+        this.bolusTrackingHu = bolusTrackingHu;
+    }
+
+    public Integer getScanDelaySec() {
+        return scanDelaySec;
+    }
+
+    public void setScanDelaySec(Integer scanDelaySec) {
+        this.scanDelaySec = scanDelaySec;
+    }
+
+    public Integer getHeartRate() {
+        return heartRate;
+    }
+
+    public void setHeartRate(Integer heartRate) {
+        this.heartRate = heartRate;
+    }
+
+    public Integer getHrVariability() {
+        return hrVariability;
+    }
+
+    public void setHrVariability(Integer hrVariability) {
+        this.hrVariability = hrVariability;
+    }
+
+    public String getReconPhase() {
+        return reconPhase;
+    }
+
+    public void setReconPhase(String reconPhase) {
+        this.reconPhase = reconPhase;
+    }
+
+    public String getKvp() {
+        return kvp;
+    }
+
+    public void setKvp(String kvp) {
+        this.kvp = kvp;
     }
 
     public LocalDateTime getCreatedAt() {

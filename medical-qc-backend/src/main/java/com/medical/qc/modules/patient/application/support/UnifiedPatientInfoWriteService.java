@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.medical.qc.bean.QualityPatientInfoSaveReq;
 import com.medical.qc.modules.pacs.model.PacsStudyCache;
 import com.medical.qc.modules.patient.model.QualityPatientInfo;
-import com.medical.qc.modules.pacs.persistence.mapper.PacsStudyMapper;
+import com.medical.qc.modules.pacs.application.support.TaskScopedPacsStudyStorageService;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedPatient;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedStudy;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedStudyFile;
@@ -31,24 +31,24 @@ import java.util.Objects;
  */
 @Service
 public class UnifiedPatientInfoWriteService {
-    // 患者、检查、文件与 PACS 缓存分别由各自 mapper 承担落库。
+    // 患者、检查、文件与任务专属 PACS 缓存分别由各自组件承担读写。
     private final UnifiedPatientMapper unifiedPatientMapper;
     private final UnifiedStudyMapper unifiedStudyMapper;
     private final UnifiedStudyFileMapper unifiedStudyFileMapper;
-    private final PacsStudyMapper pacsStudyMapper;
+    private final TaskScopedPacsStudyStorageService taskScopedPacsStudyStorageService;
     private final PatientInfoImageSupport patientInfoImageSupport;
     private final UnifiedPatientInfoQueryService unifiedPatientInfoQueryService;
 
     public UnifiedPatientInfoWriteService(UnifiedPatientMapper unifiedPatientMapper,
                                           UnifiedStudyMapper unifiedStudyMapper,
                                           UnifiedStudyFileMapper unifiedStudyFileMapper,
-                                          PacsStudyMapper pacsStudyMapper,
+                                          TaskScopedPacsStudyStorageService taskScopedPacsStudyStorageService,
                                           PatientInfoImageSupport patientInfoImageSupport,
                                           UnifiedPatientInfoQueryService unifiedPatientInfoQueryService) {
         this.unifiedPatientMapper = unifiedPatientMapper;
         this.unifiedStudyMapper = unifiedStudyMapper;
         this.unifiedStudyFileMapper = unifiedStudyFileMapper;
-        this.pacsStudyMapper = pacsStudyMapper;
+        this.taskScopedPacsStudyStorageService = taskScopedPacsStudyStorageService;
         this.patientInfoImageSupport = patientInfoImageSupport;
         this.unifiedPatientInfoQueryService = unifiedPatientInfoQueryService;
     }
@@ -174,7 +174,8 @@ public class UnifiedPatientInfoWriteService {
      */
     public Map<String, Object> syncPatientsFromPacs(String taskType) {
         String normalizedTaskType = QualityPatientTaskSupport.normalizeTaskType(taskType);
-        List<PacsStudyCache> pacsStudies = pacsStudyMapper.selectStudiesForSync();
+        // 同步直接读取任务专属 PACS 缓存表，避免再经过通用 PACS 中转表。
+        List<PacsStudyCache> pacsStudies = taskScopedPacsStudyStorageService.listStudiesForSync(normalizedTaskType);
         int totalCount = pacsStudies.size();
         int matchedCount = 0;
         int createdCount = 0;
@@ -182,10 +183,7 @@ public class UnifiedPatientInfoWriteService {
         int skippedCount = 0;
 
         for (PacsStudyCache pacsStudy : pacsStudies) {
-            // 只同步当前 taskType 关联的检查部位/任务类型。
-            if (!patientInfoImageSupport.matchesTaskType(normalizedTaskType, pacsStudy)) {
-                continue;
-            }
+            // 查询结果已按任务专属表分流，这里只继续做字段与图片校验。
             matchedCount += 1;
 
             String accessionNumber = normalizeText(pacsStudy.getAccessionNumber());

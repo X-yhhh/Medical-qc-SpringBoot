@@ -22,6 +22,18 @@ public class QualityPatientInfoSaveReq {
     private LocalDate studyDate;
     // 备注信息，可承载业务说明或补充上下文。
     private String remark;
+    // 胸部增强扩展采集参数。
+    private Double flowRate;
+    private Integer contrastVolume;
+    private String injectionSite;
+    private Double sliceThickness;
+    private Integer bolusTrackingHu;
+    private Integer scanDelaySec;
+    // 冠脉CTA扩展采集参数。
+    private Integer heartRate;
+    private Integer hrVariability;
+    private String reconPhase;
+    private String kvp;
 
     // 以下访问器供患者管理页面和自动回填逻辑共用。
     public String getPatientId() {
@@ -78,6 +90,86 @@ public class QualityPatientInfoSaveReq {
 
     public void setRemark(String remark) {
         this.remark = remark;
+    }
+
+    public Double getFlowRate() {
+        return flowRate;
+    }
+
+    public void setFlowRate(Double flowRate) {
+        this.flowRate = flowRate;
+    }
+
+    public Integer getContrastVolume() {
+        return contrastVolume;
+    }
+
+    public void setContrastVolume(Integer contrastVolume) {
+        this.contrastVolume = contrastVolume;
+    }
+
+    public String getInjectionSite() {
+        return injectionSite;
+    }
+
+    public void setInjectionSite(String injectionSite) {
+        this.injectionSite = injectionSite;
+    }
+
+    public Double getSliceThickness() {
+        return sliceThickness;
+    }
+
+    public void setSliceThickness(Double sliceThickness) {
+        this.sliceThickness = sliceThickness;
+    }
+
+    public Integer getBolusTrackingHu() {
+        return bolusTrackingHu;
+    }
+
+    public void setBolusTrackingHu(Integer bolusTrackingHu) {
+        this.bolusTrackingHu = bolusTrackingHu;
+    }
+
+    public Integer getScanDelaySec() {
+        return scanDelaySec;
+    }
+
+    public void setScanDelaySec(Integer scanDelaySec) {
+        this.scanDelaySec = scanDelaySec;
+    }
+
+    public Integer getHeartRate() {
+        return heartRate;
+    }
+
+    public void setHeartRate(Integer heartRate) {
+        this.heartRate = heartRate;
+    }
+
+    public Integer getHrVariability() {
+        return hrVariability;
+    }
+
+    public void setHrVariability(Integer hrVariability) {
+        this.hrVariability = hrVariability;
+    }
+
+    public String getReconPhase() {
+        return reconPhase;
+    }
+
+    public void setReconPhase(String reconPhase) {
+        this.reconPhase = reconPhase;
+    }
+
+    public String getKvp() {
+        return kvp;
+    }
+
+    public void setKvp(String kvp) {
+        this.kvp = kvp;
     }
 }
 

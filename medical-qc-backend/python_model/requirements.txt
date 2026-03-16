@@ -1,0 +1,9 @@
+nibabel
+numpy
+opencv-python
+Pillow
+pydicom
+SimpleITK
+torch
+torchvision
+websockets

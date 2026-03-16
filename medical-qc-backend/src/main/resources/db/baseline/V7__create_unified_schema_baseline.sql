@@ -279,32 +279,3 @@ CREATE TABLE IF NOT EXISTS `qc_rules` (
   KEY `idx_qc_rules_task_enabled` (`task_type`, `enabled`),
   CONSTRAINT `qc_rules_ibfk_1` FOREIGN KEY (`updated_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='统一质控规则表';
-
-CREATE TABLE IF NOT EXISTS `pacs_study_cache` (
-  `id` bigint NOT NULL AUTO_INCREMENT,
-  `study_instance_uid` varchar(255) NOT NULL,
-  `patient_id` varchar(100) DEFAULT NULL,
-  `patient_name` varchar(100) DEFAULT NULL,
-  `gender` varchar(20) DEFAULT NULL,
-  `age` int DEFAULT NULL,
-  `accession_number` varchar(100) DEFAULT NULL,
-  `study_date` date DEFAULT NULL,
-  `study_time` time DEFAULT NULL,
-  `study_description` varchar(255) DEFAULT NULL,
-  `modality` varchar(50) DEFAULT NULL,
-  `series_count` int DEFAULT 0,
-  `image_count` int DEFAULT 0,
-  `body_part` varchar(100) DEFAULT NULL,
-  `manufacturer` varchar(100) DEFAULT NULL,
-  `model_name` varchar(100) DEFAULT NULL,
-  `image_file_path` varchar(500) DEFAULT NULL,
-  `patient_image_path` varchar(500) DEFAULT NULL,
-  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_pacs_study_instance_uid` (`study_instance_uid`),
-  KEY `idx_pacs_patient_id` (`patient_id`),
-  KEY `idx_pacs_patient_name` (`patient_name`),
-  KEY `idx_pacs_accession_number` (`accession_number`),
-  KEY `idx_pacs_study_date` (`study_date`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='PACS检查记录缓存表';

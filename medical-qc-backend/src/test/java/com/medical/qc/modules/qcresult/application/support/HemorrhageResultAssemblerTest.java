@@ -97,5 +97,12 @@ class HemorrhageResultAssemblerTest {
         assertThat(response.get("source_mode")).isEqualTo("pacs");
         assertThat(response.get("model_name")).isEqualTo("AdvancedHemorrhageModel");
         assertThat(response.get("scanner_model")).isEqualTo("GE Revolution");
+        assertThat(response.get("mock")).isEqualTo(false);
+        assertThat(response.get("analysisMode")).isEqualTo("real-model");
+        assertThat(response.get("analysisLabel")).isEqualTo("真实模型推理");
+        @SuppressWarnings("unchecked")
+        var qcItems = (java.util.List<Map<String, Object>>) response.get("qcItems");
+        assertThat(qcItems).hasSize(3);
+        assertThat(response.get("summary")).isInstanceOf(Map.class);
     }
 }

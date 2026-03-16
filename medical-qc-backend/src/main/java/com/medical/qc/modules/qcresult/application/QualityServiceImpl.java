@@ -3,6 +3,7 @@ package com.medical.qc.modules.qcresult.application;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.medical.qc.messaging.HemorrhageIssueSyncDispatcher;
 import com.medical.qc.modules.auth.persistence.entity.User;
+import com.medical.qc.modules.patient.application.support.TaskScopedPatientInfoStorageService;
 import com.medical.qc.modules.qcresult.application.support.HemorrhagePreparationService;
 import com.medical.qc.modules.qcresult.application.support.HemorrhagePreparedContext;
 import com.medical.qc.modules.qcresult.application.support.HemorrhageResultAssembler;
@@ -10,6 +11,8 @@ import com.medical.qc.modules.qcresult.model.HemorrhageRecord;
 import com.medical.qc.modules.unified.application.UnifiedHemorrhageQueryService;
 import com.medical.qc.modules.unified.application.support.UnifiedHemorrhageWriteService;
 import com.medical.qc.shared.ai.AiGateway;
+import com.medical.qc.support.MockQualityAnalysisSupport;
+import com.medical.qc.support.RealInferenceResultValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -34,6 +37,8 @@ public class QualityServiceImpl {
     private final HemorrhageResultAssembler hemorrhageResultAssembler;
     private final UnifiedHemorrhageQueryService unifiedHemorrhageQueryService;
     private final UnifiedHemorrhageWriteService unifiedHemorrhageWriteService;
+    private final TaskScopedPatientInfoStorageService taskScopedPatientInfoStorageService;
+    private final RealInferenceResultValidator realInferenceResultValidator;
 
     public QualityServiceImpl(HemorrhageIssueSyncDispatcher hemorrhageIssueSyncDispatcher,
                               ObjectMapper objectMapper,
@@ -41,7 +46,9 @@ public class QualityServiceImpl {
                               HemorrhagePreparationService hemorrhagePreparationService,
                               HemorrhageResultAssembler hemorrhageResultAssembler,
                               UnifiedHemorrhageQueryService unifiedHemorrhageQueryService,
-                              UnifiedHemorrhageWriteService unifiedHemorrhageWriteService) {
+                              UnifiedHemorrhageWriteService unifiedHemorrhageWriteService,
+                              TaskScopedPatientInfoStorageService taskScopedPatientInfoStorageService,
+                              RealInferenceResultValidator realInferenceResultValidator) {
         this.hemorrhageIssueSyncDispatcher = hemorrhageIssueSyncDispatcher;
         this.objectMapper = objectMapper;
         this.aiGateway = aiGateway;
@@ -49,6 +56,8 @@ public class QualityServiceImpl {
         this.hemorrhageResultAssembler = hemorrhageResultAssembler;
         this.unifiedHemorrhageQueryService = unifiedHemorrhageQueryService;
         this.unifiedHemorrhageWriteService = unifiedHemorrhageWriteService;
+        this.taskScopedPatientInfoStorageService = taskScopedPatientInfoStorageService;
+        this.realInferenceResultValidator = realInferenceResultValidator;
     }
 
     /**
@@ -96,10 +105,22 @@ public class QualityServiceImpl {
                 studyDate,
                 sourceMode);
 
+        taskScopedPatientInfoStorageService.upsertPatientByAccessionNumber(
+                "hemorrhage",
+                preparedContext.patientCode(),
+                preparedContext.patientName(),
+                normalizeText(examId),
+                preparedContext.gender(),
+                preparedContext.age(),
+                preparedContext.studyDate(),
+                preparedContext.savedImagePath());
+
         // AI 网关只关心待分析图片绝对路径。
         Map<String, Object> predictionResult = aiGateway.analyzeHemorrhage(preparedContext.analysisImagePath());
-        if (predictionResult.containsKey("error")) {
-            throw hemorrhageResultAssembler.buildModelServiceException(String.valueOf(predictionResult.get("error")));
+        try {
+            realInferenceResultValidator.validateRawHemorrhageResult(predictionResult);
+        } catch (IllegalStateException exception) {
+            throw hemorrhageResultAssembler.buildModelServiceException(exception.getMessage());
         }
 
         // 将推理结果映射为数据库记录实体。
@@ -107,6 +128,9 @@ public class QualityServiceImpl {
         record.setPatientImagePath(preparedContext.savedImagePath());
         // 同时把前端需要的附加字段直接写回响应对象。
         hemorrhageResultAssembler.enrichResponse(predictionResult, record, preparedContext);
+        predictionResult = realInferenceResultValidator.validateStructuredResult(
+                MockQualityAnalysisSupport.TASK_TYPE_HEMORRHAGE,
+                predictionResult);
         hemorrhageResultAssembler.appendPreview(
                 predictionResult,
                 preparedContext.analysisImagePath(),
@@ -150,5 +174,12 @@ public class QualityServiceImpl {
             return null;
         }
         return Math.max(1, Math.min(limit, 20));
+    }
+
+    /**
+     * 去空格并把空字符串转为 null。
+     */
+    private String normalizeText(String value) {
+        return value == null || value.isBlank() ? null : value.trim();
     }
 }

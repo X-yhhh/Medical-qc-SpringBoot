@@ -343,6 +343,7 @@ public class DashboardReadSupport {
                 "hemorrhage-" + (record == null ? "unknown" : record.getId()),
                 buildVisitName(record == null ? null : record.getPatientName(), record == null ? null : record.getExamId()),
                 normalizePrimaryIssue(record == null ? null : record.getPrimaryIssue()),
+                "头部出血检测",
                 resolveVisitType(tag),
                 tag,
                 normalizeImageUrl(record == null ? null : record.getPatientImagePath()),
@@ -380,6 +381,7 @@ public class DashboardReadSupport {
                 "task-" + taskRecord.getTaskId(),
                 buildVisitName(taskRecord.getPatientName(), taskRecord.getExamId()),
                 issue,
+                resolveTaskLabel(taskRecord) + " · " + ("pacs".equals(taskRecord.getSourceMode()) ? "PACS 调取" : "本地上传"),
                 resolveVisitType(tag),
                 tag,
                 resolveTaskImageUrl(taskRecord.getStoredFilePath()),
@@ -395,6 +397,7 @@ public class DashboardReadSupport {
         item.put("id", visit.id());
         item.put("name", visit.name());
         item.put("issue", visit.issue());
+        item.put("meta", visit.meta());
         item.put("type", visit.type());
         item.put("tag", visit.tag());
         item.put("imageUrl", visit.imageUrl());
@@ -529,7 +532,7 @@ public class DashboardReadSupport {
      */
     private boolean isAbnormalQualityTask(QcTaskRecord taskRecord) {
         return isSuccessfulQualityTask(taskRecord)
-                && ("不合格".equals(taskRecord.getQcStatus())
+                && (("不合格".equals(taskRecord.getQcStatus()) || "待人工确认".equals(taskRecord.getQcStatus()))
                 || (taskRecord.getAbnormalCount() != null && taskRecord.getAbnormalCount() > 0));
     }
 
@@ -580,6 +583,9 @@ public class DashboardReadSupport {
      * 解析异步质控任务活动流类型。
      */
     private String resolveTaskEventType(QcTaskRecord taskRecord) {
+        if ("待人工确认".equals(taskRecord.getQcStatus())) {
+            return "warning";
+        }
         return isAbnormalQualityTask(taskRecord) ? "danger" : "success";
     }
 
@@ -587,6 +593,9 @@ public class DashboardReadSupport {
      * 解析异步质控任务活动流颜色。
      */
     private String resolveTaskEventColor(QcTaskRecord taskRecord) {
+        if ("待人工确认".equals(taskRecord.getQcStatus())) {
+            return "#E6A23C";
+        }
         return isAbnormalQualityTask(taskRecord) ? "#F56C6C" : "#67C23A";
     }
 
@@ -596,6 +605,9 @@ public class DashboardReadSupport {
     private String resolveVisitType(String tag) {
         if ("不合格".equals(tag) || "失败".equals(tag)) {
             return "danger";
+        }
+        if ("待人工确认".equals(tag)) {
+            return "warning";
         }
         if ("合格".equals(tag)) {
             return "success";
@@ -715,6 +727,7 @@ public class DashboardReadSupport {
                                   String id,
                                   String name,
                                   String issue,
+                                  String meta,
                                   String type,
                                   String tag,
                                   String imageUrl,

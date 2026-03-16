@@ -1,9 +1,10 @@
 package com.medical.qc.modules.unified.application.support;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.medical.qc.modules.patient.application.QualityPatientInfoServiceImpl;
+import com.medical.qc.modules.unified.persistence.entity.UnifiedPatient;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedStudy;
 import com.medical.qc.modules.unified.persistence.entity.UnifiedStudyFile;
+import com.medical.qc.modules.unified.persistence.mapper.UnifiedPatientMapper;
 import com.medical.qc.modules.unified.persistence.mapper.UnifiedStudyFileMapper;
 import com.medical.qc.modules.unified.persistence.mapper.UnifiedStudyMapper;
 import com.medical.qc.support.QualityPatientTaskSupport;
@@ -20,15 +21,15 @@ import java.time.LocalDateTime;
  */
 @Service
 public class UnifiedStudyContextService {
-    // 统一患者服务负责先保证患者/检查号主数据存在。
-    private final QualityPatientInfoServiceImpl qualityPatientInfoService;
+    // 统一任务链路直接维护 patients / studies / study_files，不再依赖任务专属缓存表。
+    private final UnifiedPatientMapper unifiedPatientMapper;
     private final UnifiedStudyMapper unifiedStudyMapper;
     private final UnifiedStudyFileMapper unifiedStudyFileMapper;
 
-    public UnifiedStudyContextService(QualityPatientInfoServiceImpl qualityPatientInfoService,
+    public UnifiedStudyContextService(UnifiedPatientMapper unifiedPatientMapper,
                                       UnifiedStudyMapper unifiedStudyMapper,
                                       UnifiedStudyFileMapper unifiedStudyFileMapper) {
-        this.qualityPatientInfoService = qualityPatientInfoService;
+        this.unifiedPatientMapper = unifiedPatientMapper;
         this.unifiedStudyMapper = unifiedStudyMapper;
         this.unifiedStudyFileMapper = unifiedStudyFileMapper;
     }
@@ -56,22 +57,37 @@ public class UnifiedStudyContextService {
             throw new IllegalArgumentException("统一模型检查上下文缺少必要字段");
         }
 
-        qualityPatientInfoService.upsertPatientByAccessionNumber(
-                normalizedTaskType,
-                patientCode,
-                normalizedPatientName,
-                normalizedAccessionNumber,
-                gender,
-                age,
-                studyDate,
-                previewPath);
-
-        // 患者模块 upsert 完成后，再反查统一检查实例并补齐任务侧上下文字段。
         UnifiedStudy study = findStudyByAccessionNumber(normalizedAccessionNumber);
+        UnifiedPatient patient = study == null || study.getPatientId() == null
+                ? null
+                : unifiedPatientMapper.selectById(study.getPatientId());
+        if (patient == null) {
+            patient = ensurePatient(
+                    normalizedTaskType,
+                    normalizeText(patientCode),
+                    normalizedPatientName,
+                    normalizeText(gender),
+                    age);
+        } else {
+            // 已有关联患者时优先复用同一主记录，避免同一检查号在补齐患者编号后生成重复患者。
+            String normalizedPatientCode = normalizeText(patientCode);
+            if (normalizedPatientCode != null) {
+                patient.setPatientNo(normalizedPatientCode);
+            }
+            patient.setPatientName(normalizedPatientName);
+            patient.setGender(normalizeText(gender));
+            patient.setAgeText(age == null ? null : String.valueOf(age));
+            patient.setStatus("ACTIVE");
+            patient.setUpdatedAt(LocalDateTime.now());
+            unifiedPatientMapper.updateById(patient);
+        }
         if (study == null) {
-            throw new IllegalStateException("统一模型检查实例创建失败");
+            study = new UnifiedStudy();
+            study.setAccessionNumber(normalizedAccessionNumber);
+            study.setCreatedAt(LocalDateTime.now());
         }
 
+        study.setPatientId(patient.getId());
         study.setStudyNo(buildStudyNo(normalizedTaskType, normalizedAccessionNumber));
         study.setModality(resolveModality(normalizedTaskType));
         study.setBodyPart(resolveBodyPart(normalizedTaskType));
@@ -81,7 +97,11 @@ public class UnifiedStudyContextService {
         study.setDeviceModel(firstNonBlank(normalizeText(deviceModel), study.getDeviceModel()));
         study.setStatus("ACTIVE");
         study.setUpdatedAt(LocalDateTime.now());
-        unifiedStudyMapper.updateById(study);
+        if (study.getId() == null) {
+            unifiedStudyMapper.insert(study);
+        } else {
+            unifiedStudyMapper.updateById(study);
+        }
 
         if (StringUtils.hasText(previewPath)) {
             // 预览图统一挂在 PREVIEW 角色下，供列表和详情页优先读取。
@@ -96,6 +116,36 @@ public class UnifiedStudyContextService {
                     true);
         }
         return unifiedStudyMapper.selectById(study.getId());
+    }
+
+    /**
+     * 确保统一患者主数据存在。
+     */
+    private UnifiedPatient ensurePatient(String taskType,
+                                        String patientCode,
+                                        String patientName,
+                                        String gender,
+                                        Integer age) {
+        String patientNo = buildPatientNo(taskType, patientCode, patientName);
+        UnifiedPatient patient = unifiedPatientMapper.selectOne(new QueryWrapper<UnifiedPatient>()
+                .eq("patient_no", patientNo)
+                .last("LIMIT 1"));
+        if (patient == null) {
+            patient = new UnifiedPatient();
+            patient.setPatientNo(patientNo);
+            patient.setCreatedAt(LocalDateTime.now());
+        }
+        patient.setPatientName(patientName);
+        patient.setGender(gender);
+        patient.setAgeText(age == null ? null : String.valueOf(age));
+        patient.setStatus("ACTIVE");
+        patient.setUpdatedAt(LocalDateTime.now());
+        if (patient.getId() == null) {
+            unifiedPatientMapper.insert(patient);
+        } else {
+            unifiedPatientMapper.updateById(patient);
+        }
+        return patient;
     }
 
     /**
@@ -189,6 +239,16 @@ public class UnifiedStudyContextService {
      */
     private String buildStudyNo(String taskType, String accessionNumber) {
         return "rt-" + taskType + "-study-" + accessionNumber;
+    }
+
+    /**
+     * 构造统一患者编号。
+     */
+    private String buildPatientNo(String taskType, String patientCode, String patientName) {
+        if (StringUtils.hasText(patientCode)) {
+            return patientCode.trim();
+        }
+        return "rt-" + taskType + "-patient-" + patientName.hashCode();
     }
 
     /**

@@ -35,6 +35,13 @@ public class QcTaskRecord implements Serializable {
     private Integer abnormalCount;
     private String primaryIssue;
     private String resultJson;
+    private String reviewStatus;
+    private String reviewComment;
+    private Long reviewedBy;
+    private LocalDateTime reviewedAt;
+    private LocalDateTime lockedAt;
+    private String externalRef;
+    private String device;
     private String errorMessage;
     // 提交、开始、完成及创建更新时间。
     private LocalDateTime submittedAt;
@@ -259,6 +266,62 @@ public class QcTaskRecord implements Serializable {
 
     public void setResultJson(String resultJson) {
         this.resultJson = resultJson;
+    }
+
+    public String getReviewStatus() {
+        return reviewStatus;
+    }
+
+    public void setReviewStatus(String reviewStatus) {
+        this.reviewStatus = reviewStatus;
+    }
+
+    public String getReviewComment() {
+        return reviewComment;
+    }
+
+    public void setReviewComment(String reviewComment) {
+        this.reviewComment = reviewComment;
+    }
+
+    public Long getReviewedBy() {
+        return reviewedBy;
+    }
+
+    public void setReviewedBy(Long reviewedBy) {
+        this.reviewedBy = reviewedBy;
+    }
+
+    public LocalDateTime getReviewedAt() {
+        return reviewedAt;
+    }
+
+    public void setReviewedAt(LocalDateTime reviewedAt) {
+        this.reviewedAt = reviewedAt;
+    }
+
+    public LocalDateTime getLockedAt() {
+        return lockedAt;
+    }
+
+    public void setLockedAt(LocalDateTime lockedAt) {
+        this.lockedAt = lockedAt;
+    }
+
+    public String getExternalRef() {
+        return externalRef;
+    }
+
+    public void setExternalRef(String externalRef) {
+        this.externalRef = externalRef;
+    }
+
+    public String getDevice() {
+        return device;
+    }
+
+    public void setDevice(String device) {
+        this.device = device;
     }
 
     public String getErrorMessage() {

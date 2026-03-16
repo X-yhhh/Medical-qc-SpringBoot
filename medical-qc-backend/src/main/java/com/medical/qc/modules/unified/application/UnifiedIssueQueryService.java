@@ -22,6 +22,7 @@ import com.medical.qc.modules.unified.persistence.mapper.UnifiedQcTaskMapper;
 import com.medical.qc.modules.unified.persistence.mapper.UnifiedStudyMapper;
 import com.medical.qc.shared.JsonObjectMapReader;
 import com.medical.qc.support.MockQualityAnalysisSupport;
+import com.medical.qc.support.TaskScopedSourceTableSupport;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -57,6 +58,7 @@ public class UnifiedIssueQueryService {
     private final UnifiedPatientMapper unifiedPatientMapper;
     private final UserMapper userMapper;
     private final ObjectMapper objectMapper;
+    private final TaskScopedSourceTableSupport taskScopedSourceTableSupport;
 
     public UnifiedIssueQueryService(UnifiedIssueTicketMapper unifiedIssueTicketMapper,
                                     UnifiedIssueActionLogMapper unifiedIssueActionLogMapper,
@@ -67,7 +69,8 @@ public class UnifiedIssueQueryService {
                                     UnifiedStudyMapper unifiedStudyMapper,
                                     UnifiedPatientMapper unifiedPatientMapper,
                                     UserMapper userMapper,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    TaskScopedSourceTableSupport taskScopedSourceTableSupport) {
         this.unifiedIssueTicketMapper = unifiedIssueTicketMapper;
         this.unifiedIssueActionLogMapper = unifiedIssueActionLogMapper;
         this.unifiedIssueCapaRecordMapper = unifiedIssueCapaRecordMapper;
@@ -78,6 +81,7 @@ public class UnifiedIssueQueryService {
         this.unifiedPatientMapper = unifiedPatientMapper;
         this.userMapper = userMapper;
         this.objectMapper = objectMapper;
+        this.taskScopedSourceTableSupport = taskScopedSourceTableSupport;
     }
 
     /**
@@ -216,6 +220,22 @@ public class UnifiedIssueQueryService {
     }
 
     /**
+     * 获取符合筛选条件的全部异常工单摘要，供服务端导出使用。
+     */
+    public List<Map<String, Object>> getIssueItems(Long scopedUserId, String query, String status) {
+        List<UnifiedIssueTicket> tickets = loadScopedTickets(scopedUserId).stream()
+                .filter(ticket -> matchesQuery(ticket, query))
+                .filter(ticket -> matchesStatus(ticket, status))
+                .toList();
+        Map<Long, UnifiedQcTask> taskMap = loadTaskMap(tickets);
+        Map<Long, UnifiedStudy> studyMap = loadStudyMap(taskMap.values());
+        Map<Long, UnifiedPatient> patientMap = loadPatientMap(studyMap.values());
+        return tickets.stream()
+                .map(ticket -> toSummaryItem(ticket, taskMap.get(ticket.getTaskId()), studyMap, patientMap))
+                .toList();
+    }
+
+    /**
      * 获取单条工单摘要。
      */
     public Map<String, Object> getIssueSummary(Long scopedUserId, Long issueId) {
@@ -348,6 +368,7 @@ public class UnifiedIssueQueryService {
         item.put("type", task == null ? "--" : MockQualityAnalysisSupport.resolveTaskTypeName(task.getTaskTypeCode()));
         item.put("sourceType", task == null ? null : task.getTaskTypeCode());
         item.put("sourceRecordId", task == null ? null : task.getId());
+        item.put("sourceCacheTable", task == null ? null : resolveSourceCacheTable(task.getTaskTypeCode(), task.getSourceMode()));
         item.put("issueType", ticket.getIssueName());
         item.put("description", ticket.getDescription());
         item.put("date", formatDateTime(ticket.getCreatedAt()));
@@ -383,9 +404,21 @@ public class UnifiedIssueQueryService {
                 .eq("task_id", task.getId())
                 .eq("result_version", 1)
                 .last("LIMIT 1"));
-        Map<String, Object> rawResult = parseJson(result == null ? null : result.getRawResultJson());
+        Map<String, Object> rawResult = MockQualityAnalysisSupport.normalizeResultPayload(
+                parseJson(result == null ? null : result.getRawResultJson()));
         if (!rawResult.isEmpty()) {
-            return rawResult;
+            Map<String, Object> enrichedRawResult = new HashMap<>(rawResult);
+            enrichedRawResult.putIfAbsent("detailType", "qualityTask");
+            enrichedRawResult.put("taskId", task.getTaskNo());
+            enrichedRawResult.put("taskType", task.getTaskTypeCode());
+            enrichedRawResult.put("taskTypeName", MockQualityAnalysisSupport.resolveTaskTypeName(task.getTaskTypeCode()));
+            enrichedRawResult.put("sourceMode", task.getSourceMode());
+            enrichedRawResult.put("sourceModeLabel", "pacs".equals(task.getSourceMode()) ? "PACS 调取" : "本地上传");
+            enrichedRawResult.put("sourceCacheTable", resolveSourceCacheTable(task.getTaskTypeCode(), task.getSourceMode()));
+            enrichedRawResult.put("qcStatus", MockQualityAnalysisSupport.resolveQcStatus(enrichedRawResult));
+            String primaryIssue = MockQualityAnalysisSupport.resolvePrimaryIssue(enrichedRawResult);
+            enrichedRawResult.put("primaryIssue", "未见明显异常".equals(primaryIssue) ? null : primaryIssue);
+            return enrichedRawResult;
         }
 
         UnifiedStudy study = studyMap.get(task.getStudyId());
@@ -398,27 +431,80 @@ public class UnifiedIssueQueryService {
         sourceDetail.put("taskId", task.getTaskNo());
         sourceDetail.put("taskType", task.getTaskTypeCode());
         sourceDetail.put("taskTypeName", MockQualityAnalysisSupport.resolveTaskTypeName(task.getTaskTypeCode()));
-        sourceDetail.put("patientInfo", Map.of(
-                "name", patient == null ? null : patient.getPatientName(),
-                "studyId", study == null ? null : study.getAccessionNumber(),
-                "gender", patient == null ? null : patient.getGender(),
-                "age", patient == null ? null : patient.getAgeText(),
-                "studyDate", study == null ? null : study.getStudyDate(),
-                "sourceLabel", "pacs".equals(task.getSourceMode()) ? "PACS 调取" : "本地上传",
-                "device", study == null ? null : study.getDeviceModel()
-        ));
-        sourceDetail.put("summary", Map.of(
-                "qualityScore", result == null || result.getQualityScore() == null ? null : result.getQualityScore().doubleValue(),
-                "abnormalCount", result == null ? 0 : result.getAbnormalCount()
-        ));
-        sourceDetail.put("qcItems", resultItems.stream().map(item -> Map.of(
-                "name", item.getItemName(),
-                "status", item.getItemStatus(),
-                "detail", item.getDetailText(),
-                "description", item.getDetailText()
-        )).toList());
+        sourceDetail.put("sourceMode", task.getSourceMode());
+        sourceDetail.put("sourceModeLabel", "pacs".equals(task.getSourceMode()) ? "PACS 调取" : "本地上传");
+        sourceDetail.put("sourceCacheTable", resolveSourceCacheTable(task.getTaskTypeCode(), task.getSourceMode()));
+        sourceDetail.put("patientInfo", buildQualityTaskPatientInfo(task, patient, study));
+        sourceDetail.put("summary", buildQualityTaskSummary(task, result, resultItems));
+        sourceDetail.put("qcItems", buildQualityTaskQcItems(resultItems));
+        sourceDetail.put("qcStatus", result == null ? null : result.getQcStatus());
+        sourceDetail.put("primaryIssue", result == null ? null : result.getPrimaryIssueName());
         sourceDetail.put("errorMessage", task.getErrorMessage());
         return sourceDetail;
+    }
+
+    /**
+     * 组装质控任务详情中的患者与采集信息，避免 Map.of 在空值场景抛出异常。
+     */
+    private Map<String, Object> buildQualityTaskPatientInfo(UnifiedQcTask task,
+                                                            UnifiedPatient patient,
+                                                            UnifiedStudy study) {
+        Map<String, Object> patientInfo = new HashMap<>();
+        patientInfo.put("name", patient == null ? null : patient.getPatientName());
+        patientInfo.put("studyId", study == null ? null : study.getAccessionNumber());
+        patientInfo.put("gender", patient == null ? null : patient.getGender());
+        patientInfo.put("age", patient == null ? null : patient.getAgeText());
+        patientInfo.put("studyDate", study == null ? null : study.getStudyDate());
+        patientInfo.put("sourceLabel", "pacs".equals(task.getSourceMode()) ? "PACS 调取" : "本地上传");
+        patientInfo.put("device", study == null ? null : study.getDeviceModel());
+        return patientInfo;
+    }
+
+    /**
+     * 组装质控任务摘要，补齐复核项和主异常项，供问题工单详情页直接展示。
+     */
+    private Map<String, Object> buildQualityTaskSummary(UnifiedQcTask task,
+                                                        UnifiedQcResult result,
+                                                        List<UnifiedQcResultItem> resultItems) {
+        long reviewCount = resultItems.stream()
+                .filter(item -> "待人工确认".equals(item.getItemStatus()))
+                .count();
+        long failCount = resultItems.stream()
+                .filter(item -> item.getItemStatus() != null
+                        && !"合格".equals(item.getItemStatus())
+                        && !"待人工确认".equals(item.getItemStatus()))
+                .count();
+        String primaryIssue = resultItems.stream()
+                .filter(item -> item.getItemStatus() != null && !"合格".equals(item.getItemStatus()))
+                .map(UnifiedQcResultItem::getItemName)
+                .filter(StringUtils::hasText)
+                .findFirst()
+                .orElse(result == null ? null : result.getPrimaryIssueName());
+
+        Map<String, Object> summary = new HashMap<>();
+        summary.put("qualityScore", result == null || result.getQualityScore() == null
+                ? null
+                : result.getQualityScore().doubleValue());
+        summary.put("abnormalCount", result == null || result.getAbnormalCount() == null ? 0 : result.getAbnormalCount());
+        summary.put("reviewCount", reviewCount);
+        summary.put("failCount", failCount);
+        summary.put("result", result == null ? null : result.getQcStatus());
+        summary.put("primaryIssue", primaryIssue);
+        return summary;
+    }
+
+    /**
+     * 组装质控任务原始质控项列表，兼容 detailText 为空的场景。
+     */
+    private List<Map<String, Object>> buildQualityTaskQcItems(List<UnifiedQcResultItem> resultItems) {
+        return resultItems.stream().map(item -> {
+            Map<String, Object> qcItem = new HashMap<>();
+            qcItem.put("name", item.getItemName());
+            qcItem.put("status", item.getItemStatus());
+            qcItem.put("detail", item.getDetailText());
+            qcItem.put("description", item.getDetailText());
+            return qcItem;
+        }).toList();
     }
 
     /**
@@ -485,10 +571,19 @@ public class UnifiedIssueQueryService {
                 : study.getAccessionNumber().trim();
         String issueType = firstNonBlank(ticket.getIssueName(), "异常质控项");
         String taskLabel = task == null ? "质控任务" : MockQualityAnalysisSupport.resolveTaskTypeName(task.getTaskTypeCode());
-        String overdueSuffix = ticket.getDueAt() != null && ticket.getDueAt().isBefore(LocalDateTime.now()) ? "，已超过SLA时限" : "";
+        boolean overdue = ticket.getDueAt() != null && ticket.getDueAt().isBefore(LocalDateTime.now());
+        String priority = firstNonBlank(ticket.getPriority(), "中");
 
         Map<String, Object> item = new HashMap<>();
-        item.put("content", patientName + "（" + examId + "）" + taskLabel + "存在“" + issueType + "”，请及时复核" + overdueSuffix);
+        item.put("title", issueType);
+        item.put("patientName", patientName);
+        item.put("examId", examId);
+        item.put("taskTypeName", taskLabel);
+        item.put("priority", priority);
+        item.put("overdue", overdue);
+        item.put("status", ticket.getStatus());
+        item.put("content", patientName + "（" + examId + "）" + taskLabel + "存在“" + issueType + "”");
+        item.put("description", overdue ? "已超过 SLA 时限，请优先处理" : "请及时复核并推进工单流转");
         item.put("time", ticket.getCreatedAt() == null ? "--" : ticket.getCreatedAt().format(ALERT_TIME_FORMATTER));
         item.put("targetRoute", "/issues");
         return item;
@@ -613,6 +708,18 @@ public class UnifiedIssueQueryService {
      */
     private String formatDateTime(LocalDateTime value) {
         return value == null ? "--" : value.format(SUMMARY_TIME_FORMATTER);
+    }
+
+    /**
+     * 解析任务关联的来源缓存表名。
+     */
+    private String resolveSourceCacheTable(String taskType, String sourceMode) {
+        if (!StringUtils.hasText(taskType)) {
+            return null;
+        }
+        return "pacs".equals(sourceMode)
+                ? taskScopedSourceTableSupport.resolvePacsTableLabel(taskType)
+                : taskScopedSourceTableSupport.resolvePatientInfoTableLabel(taskType);
     }
 
     /**
