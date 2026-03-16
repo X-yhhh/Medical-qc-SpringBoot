@@ -72,12 +72,27 @@ npm run dev
 
 Python 服务代码位于：
 
-- `medical-qc-backend/python_model/model_server.py`
+- `medical-qc-backend/python_model/inference_server.py`
+- `medical-qc-backend/python_model/hemorrhage_detection/`
+- `medical-qc-backend/python_model/head_ct_plain_qc/`
+- `medical-qc-backend/python_model/chest_ct_non_contrast_qc/`
+- `medical-qc-backend/python_model/chest_contrast_qc/`
+- `medical-qc-backend/python_model/coronary_cta_qc/`
+- `medical-qc-backend/python_model/medical_volume_utils.py`
 
 说明：
 
 - 在当前 `dev` 配置下，后端允许自动拉起本地 Python 服务
 - 若本地未能自动拉起，需要单独检查 Python 环境、模型文件和端口占用
+- 当前 WebSocket 健康检查状态应为：
+  - `hemorrhage=true`
+  - `head=true`
+  - `chest-non-contrast=true`
+- 健康检查中的真实模型状态只对应上述三条链路
+- `chest-contrast`、`coronary-cta` 当前固定为规则型 mock 链路，不参与真实模型健康检查
+- 本地上传统一支持 `.dcm` / `.dicom` / `.nii` / `.nii.gz` / `.zip`
+- Python 依赖清单位于 `medical-qc-backend/python_model/requirements.txt`
+- 三条真实链路若遇到空结果、错误结果或结果结构不完整，会直接失败并回写 `errorMessage`
 
 ## 4. 目录说明
 
@@ -97,7 +112,7 @@ Python 服务代码位于：
 | `src/main/java/com/medical/qc/modules` | 业务模块 |
 | `src/main/resources/db/baseline` | Flyway 基线脚本 |
 | `src/main/resources/mapper` | MyBatis XML |
-| `python_model/` | Python 推理与训练代码 |
+| `python_model/` | Python 推理与训练代码，按质控项拆分到子目录 |
 | `scripts/` | 启动与自检脚本 |
 | `uploads/` | 本地上传目录 |
 
@@ -116,10 +131,12 @@ Python 服务代码位于：
 ### 5.1 后端
 
 - `modules/qcresult`：头部出血检测真实链路
-- `modules/qctask`：统一任务中心
+- `modules/qctask`：统一任务中心与异步质控任务编排
 - `modules/patient`：患者信息管理
 - `modules/issue`：异常工单与 CAPA
 - `modules/qcrule`：规则中心
+- `modules/unified`：统一任务、结果、异常聚合读写
+- `modules/pacs`：任务专属 PACS 缓存查询
 
 ### 5.2 前端
 
@@ -187,18 +204,27 @@ npm run type-check
 1. 登录注册
 2. 当前用户接口
 3. 仪表盘概览
-4. 头部出血检测
-5. 任务中心
-6. 患者信息管理
-7. 异常工单
-8. 规则中心
+4. 头部出血检测（真实）
+5. CT头部平扫质控（真实）
+6. CT胸部平扫质控（真实）
+7. CT胸部增强质控（规则型 mock）
+8. 冠脉CTA质控（规则型 mock）
+9. 任务中心
+10. 患者信息管理
+11. 异常工单
+12. 规则中心
 
 ### 8.2 推荐关注点
 
 - Redis 未启动时，登录态和会话相关功能会异常
-- Python 服务未启动时，头部出血检测会失败
+- Python 服务未启动时，头部出血检测、CT头部平扫质控、CT胸部平扫质控会失败
+- 真实链路失败时前端会显示任务失败原因，不再回退为“合格/100分”
 - ActiveMQ 不可用时，异步任务链路可能受影响
-- PACS 目前读取的是缓存表，不要按真实 DICOM 网关行为排查
+- PACS 当前统一读取任务专属缓存表，不要按真实 DICOM 网关行为排查
+- 当前任务专属源表为唯一有效源数据入口：
+  - 本地上传走 `*_patient_info`
+  - PACS 调取走 `*_pacs_study_cache`
+- 真实链路 `head`、`chest-non-contrast` 提交时必须携带 `patient_name`、`exam_id`、`gender`、`age`、`study_date`
 
 ## 9. 开发约束
 

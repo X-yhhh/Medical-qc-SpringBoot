@@ -3,8 +3,13 @@
 medical-qc-backend/target/
 medical-qc-backend/logs/
 medical-qc-backend/uploads/
-medical-qc-backend/python_model/data/head_ct/
-medical-qc-backend/python_model/data/hemorrhage_uploads/
+# 本地数据集与 Python 运行期产物不纳入版本管理。
+/datasets/
+medical-qc-backend/python_model/data/
+medical-qc-backend/python_model/models/
+medical-qc-backend/python_model/results/
+medical-qc-backend/python_model/server_stdout.log
+medical-qc-backend/python_model/server_stderr.log
 *.zip
 medical-qc-frontend/node_modules/
 medical-qc-frontend/dist/
@@ -16,3 +21,4 @@ __pycache__/
 *.pyc
 .doc/
 CLAUDE.md
+tmp_head_qc_session.xml

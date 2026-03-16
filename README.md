@@ -1,6 +1,6 @@
 # Medical QC SYS
 
-Medical QC SYS 是一个面向医学影像质控场景的前后端分离项目，当前由 `Spring Boot` 后端、`Vue 3` 前端和独立 Python 推理服务组成。系统围绕统一质控模型组织任务、结果、异常工单、患者信息和规则配置，当前唯一真实接入 AI 推理的链路为头部出血检测。
+Medical QC SYS 是一个面向医学影像质控场景的前后端分离项目，当前由 `Spring Boot` 后端、`Vue 3` 前端和独立 Python 推理服务组成。系统围绕统一质控模型组织任务、结果、异常工单、患者信息和规则配置，当前已固定三条真实模型推理链路，并保留两条规则型 mock 质控链路用于流程演示与后续扩展。
 
 ## 项目概览
 
@@ -13,7 +13,7 @@ flowchart LR
   Backend --> Redis["Redis Session / Cache"]
   Backend --> ActiveMQ["ActiveMQ"]
   Backend --> Uploads["Local uploads/"]
-  Backend --> PACS["pacs_study_cache"]
+  Backend --> PACS["Task-scoped PACS Tables"]
   Backend --> Python["Python Inference Service"]
 ```
 
@@ -23,17 +23,27 @@ flowchart LR
 | --- | --- | --- |
 | 登录注册与权限 | 已实现 | 支持管理员、医生两类角色，会话存储基于 Redis |
 | 仪表盘 | 已实现 | 展示趋势、风险预警、待办事项和快捷入口 |
-| 头部出血检测 | 已实现 | 接入 Python WebSocket 推理服务，结果写入统一模型 |
-| 其他质控任务 | 已实现 | 头部平扫、胸部平扫、胸部增强、冠脉 CTA 走统一任务中心 |
+| 头部出血检测 | 已实现 | 真实模型推理，结果写入统一模型 |
+| CT头部平扫质控 | 已实现 | 真实模型推理，支持本地上传与 PACS 调取 |
+| CT胸部平扫质控 | 已实现 | 真实模型推理，支持本地上传与 PACS 调取 |
+| CT胸部增强质控 | 已实现 | 当前固定为规则型 mock 链路，保留前后端与数据库骨架 |
+| 冠脉 CTA 质控 | 已实现 | 当前固定为规则型 mock 链路，保留前后端与数据库骨架 |
 | 患者信息管理 | 已实现 | 五类任务共享统一患者和检查模型 |
-| PACS 查询 | 已实现 | 基于缓存表检索检查记录并补齐主数据 |
+| PACS 查询 | 已实现 | 基于任务专属缓存表检索检查记录并补齐主数据 |
 | 异常工单 | 已实现 | 支持统计、详情、状态流转和 CAPA |
 | 规则中心 | 已实现 | 支持维护优先级、责任角色、SLA 和自动建单策略 |
 
 说明：
 
-- `hemorrhage` 为当前真实 AI 检测链路。
-- `head`、`chest-non-contrast`、`chest-contrast`、`coronary-cta` 当前统一走任务模型，但分析结果以 mock 数据为主。
+- 当前真实 AI / 质控链路：
+  - `hemorrhage`
+  - `head`
+  - `chest-non-contrast`
+- 当前规则型 mock 链路：
+  - `chest-contrast`
+  - `coronary-cta`
+- 统一任务本地上传支持 `.dcm` / `.dicom` / `.nii` / `.nii.gz` / `.zip`
+- 三条真实链路遇到无效输入、模型异常、空结果或不完整结果时，任务会直接失败，前端不会再回退为“合格/100 分”
 
 ## 技术栈
 
@@ -145,17 +155,15 @@ npm run type-check
 
 - 运行库固定为 `medical_qc_sys_unified`
 - Flyway 基线位于 `medical-qc-backend/src/main/resources/db/baseline`
+- 新库只创建统一模型表与任务专属 `*_patient_info` / `*_pacs_study_cache`，不再创建 `pacs_study_cache`
 - 上传目录使用本地 `uploads/`
 - `dev` 环境允许自动拉起本地 Python 和 ActiveMQ
 - `prod` 环境默认禁止自动拉起外部进程
+- 真实链路 `head` 与 `chest-non-contrast` 的本地上传必须提供患者姓名、检查号、性别、年龄和检查日期
 
 ## 文档导航
 
-- 文档索引：`docs/README.md`
-- 项目架构文档：`docs/project-documentation.md`
 - 开发文档：`docs/development-guide.md`
 - 功能介绍：`docs/feature-overview.md`
 - 使用说明：`docs/user-guide.md`
 - 生产部署说明：`docs/deployment-production.md`
-- 部署骨架说明：`deploy/README.md`
-- 前端子项目说明：`medical-qc-frontend/README.md`

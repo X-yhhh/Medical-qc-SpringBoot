@@ -117,13 +117,14 @@ npm run build
 ## 10. 已知部署注意事项
 
 - 头部出血检测对 Python 服务可用性敏感
-- 其他质控任务当前仍主要返回 mock 结果
+- `head`、`chest-non-contrast` 依赖 Python 真实推理服务
+- `chest-contrast`、`coronary-cta` 当前为后端 mock 链路，不依赖 Python 模型文件
 - Redis 不可用会影响会话登录状态
 - `uploads/` 若不持久化，重启后会丢失本地文件引用
 
 ## 11. 配套文档
 
 - 根说明：`README.md`
-- 架构说明：`docs/project-documentation.md`
 - 开发文档：`docs/development-guide.md`
-- 部署骨架说明：`deploy/README.md`
+- 功能介绍：`docs/feature-overview.md`
+- 使用说明：`docs/user-guide.md`

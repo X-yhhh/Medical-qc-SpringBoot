@@ -19,8 +19,8 @@
 | 仪表盘 | `/dashboard` | 总览统计、质控趋势、风险预警、待办事项 | 医生、管理员 |
 | 头部平扫质控 | `/head` | 提交头部平扫质控任务 | 医生 |
 | 胸部平扫质控 | `/chest-non-contrast` | 提交胸部平扫质控任务 | 医生 |
-| 胸部增强质控 | `/chest-contrast` | 提交胸部增强质控任务 | 医生 |
-| 冠脉 CTA 质控 | `/coronary-cta` | 提交冠脉 CTA 质控任务 | 医生 |
+| 胸部增强质控 | `/chest-contrast` | 提交胸部增强模拟质控任务 | 医生 |
+| 冠脉 CTA 质控 | `/coronary-cta` | 提交冠脉 CTA 模拟质控任务 | 医生 |
 | 头部出血检测 | `/hemorrhage` | 上传影像、PACS 调取、AI 分析、历史结果查看、报告导出 | 医生 |
 | 任务中心 | `/quality-tasks` | 统一查看任务状态、来源和结果摘要 | 医生、管理员 |
 | 患者信息管理 | `/patient-info/*` | 患者档案维护、影像上传、PACS 初始化同步 | 医生、管理员 |
@@ -45,9 +45,15 @@
 - `GET /api/v1/dashboard/overview`
 - `GET /api/v1/dashboard/trend`
 
-### 3.2 头部出血检测
+### 3.2 真实推理任务
 
-头部出血检测是当前唯一真实接入 AI 推理的功能，支持：
+当前真实接入 AI / 质控推理的任务包括：
+
+- 头部出血检测
+- CT头部平扫质控
+- CT胸部平扫质控
+
+其中头部出血检测支持：
 
 - 本地图片上传
 - PACS 检查记录选择
@@ -62,6 +68,22 @@
 - `GET /api/v1/quality/hemorrhage/history`
 - `GET /api/v1/quality/hemorrhage/history/{recordId}`
 - `GET /api/v1/pacs/search`
+
+CT头部平扫质控与 CT胸部平扫质控支持：
+
+- 本地影像上传
+- PACS 检查记录选择
+- 患者姓名、检查号、性别、年龄、检查日期统一写库
+- 异步任务轮询
+- WebSocket 真实模型推理
+- 结果回填与异常建单
+
+接口映射：
+
+- `POST /api/v1/quality/head/detect`
+- `POST /api/v1/quality/chest-non-contrast/detect`
+- `GET /api/v1/quality/tasks`
+- `GET /api/v1/quality/tasks/{taskId}`
 
 ### 3.3 统一任务中心
 
@@ -84,8 +106,21 @@
 
 说明：
 
-- 当前除头部出血检测外，其余任务结果以 mock 数据为主
+- `hemorrhage`、`head`、`chest-non-contrast` 为真实模型推理链路
+- `chest-contrast`、`coronary-cta` 当前固定为规则型 mock 链路
+- 四类异步质控任务统一支持 DICOM / NIfTI / ZIP 输入
 - 任务写入、状态管理、结果查询和异常建单路径已统一
+- 真实链路若返回空结果、错误结果或不完整结果，任务会直接标记为失败，不再回退成“合格/100分”
+- 任务中心与详情页会显式展示 `mock / 真实模型推理 / 模拟分析（规则辅助）` 标记
+
+补充接口映射：
+
+- `PATCH /api/v1/quality/tasks/{taskId}/review`
+- `PATCH /api/v1/quality/tasks/batch/review`
+- `POST /api/v1/quality/tasks/batch/retry`
+- `GET /api/v1/quality/tasks/{taskId}/report`
+- `POST /api/v1/quality/tasks/export`
+- `GET /api/v1/quality/tasks/metrics`
 
 ### 3.4 患者信息管理
 
@@ -179,7 +214,7 @@
 
 ## 5. 当前实现边界
 
-- `hemorrhage` 是当前真实链路
-- 其他四类质控任务还不是完整 AI 推理链路
-- PACS 读取的是缓存表，不代表已完成真实 PACS 网关对接
+- 当前统一任务链路：`head`、`chest-non-contrast`、`chest-contrast`、`coronary-cta`
+- 其中 `head`、`chest-non-contrast` 为真实模型推理；`chest-contrast`、`coronary-cta` 为规则型 mock
+- PACS 读取的是任务专属缓存表，不代表已完成真实医院 PACS 网关对接
 - 使用说明中的操作路径以当前前端页面为准
