@@ -2,7 +2,7 @@
   @file ChestContrastPage.vue
   @description CT胸部增强智能质控视图
   主要功能：
-  1. 影像上传：支持本地影像上传和 PACS 模拟调取。
+  1. 影像上传：支持本地影像上传和 PACS 调取。
   2. 异步分析：提交后端质控任务，前端自动轮询任务状态并展示进度。
   3. 结果展示：增强参数、质控评分、按时相分组的异常项列表。
   4. 详情查看：点击质控项查看详细分析结果。
@@ -22,9 +22,10 @@
           <el-breadcrumb-item>CT胸部增强</el-breadcrumb-item>
         </el-breadcrumb>
         <h2 class="page-title">
-          CT胸部增强智能质控
-          <el-tag v-if="qcItems.length > 0" type="primary" effect="plain" class="status-tag"
-            >AI 自动分析完成</el-tag
+          CT胸部增强模拟质控
+          <el-tag type="warning" effect="dark" class="status-tag">规则型 Mock</el-tag>
+          <el-tag v-if="qcItems.length > 0" :type="pageStatusType" effect="plain" class="status-tag"
+            >{{ pageStatusLabel }}</el-tag
           >
           <el-tag v-else type="info" effect="plain" class="status-tag">等待上传影像</el-tag>
         </h2>
@@ -42,6 +43,18 @@
       </div>
     </div>
 
+    <el-alert
+      class="mock-notice"
+      title="当前链路为模拟分析（规则辅助）"
+      type="warning"
+      :closable="false"
+      show-icon
+    >
+      <template #default>
+        胸部增强页面保留前后端与数据库骨架，但本轮不使用真实模型推理，结果仅用于流程联调与规则演示。
+      </template>
+    </el-alert>
+
     <!--
       @section 上传区域
       当没有质控数据时显示。
@@ -49,7 +62,19 @@
       1. 分析中的动画状态 (analyzing = true)
       2. 上传方式选择卡片 (本地上传 / PACS调取)
     -->
-    <div v-if="qcItems.length === 0" class="upload-section">
+    <div v-if="taskError && !analyzing" class="task-error-section">
+      <el-result
+        icon="warning"
+        title="胸部增强模拟分析失败"
+        :sub-title="taskError"
+      >
+        <template #extra>
+          <el-button type="primary" @click="handleReanalyze">重新分析</el-button>
+          <el-button @click="resetUpload">重新上传</el-button>
+        </template>
+      </el-result>
+    </div>
+    <div v-else-if="qcItems.length === 0" class="upload-section">
       <div class="upload-wrapper">
         <!-- 正在分析的状态 (覆盖在上传区域之上，或者替换它) -->
         <transition name="fade" mode="out-in">
@@ -59,7 +84,7 @@
               <el-icon class="scan-icon"><Aim /></el-icon>
             </div>
             <div class="progress-info">
-              <h3 class="analyzing-title">AI 智能分析中</h3>
+              <h3 class="analyzing-title">模拟分析中</h3>
               <el-progress
                 :percentage="analyzeProgress"
                 :stroke-width="12"
@@ -89,14 +114,14 @@
                     <el-icon><FolderOpened /></el-icon>
                   </div>
                   <h3>本地影像上传</h3>
-                  <p>支持 DICOM 文件夹拖拽上传</p>
-                  <p class="sub-tip">自动解析 .dcm 序列文件</p>
+                  <p>支持 DICOM / NIfTI / ZIP 影像文件上传</p>
+                  <p class="sub-tip">支持 .dcm / .nii / .nii.gz / .zip</p>
                 </div>
               </el-col>
 
               <!-- PACS 入口卡片 -->
               <el-col :span="10">
-                <div class="choice-card pacs-select" @click="simulatePacsSelect">
+                <div class="choice-card pacs-select" @click="openPacsSearch">
                   <div class="icon-wrapper">
                     <el-icon><Connection /></el-icon>
                   </div>
@@ -165,6 +190,7 @@
               <el-descriptions-item label="注射部位">{{
                 patientInfo.injectionSite
               }}</el-descriptions-item>
+              <el-descriptions-item label="分析模式">{{ analysisLabel || '模拟分析（规则辅助）' }}</el-descriptions-item>
             </el-descriptions>
           </el-card>
         </el-col>
@@ -193,8 +219,8 @@
                 </div>
                 <div class="summary-result">
                   综合判定:
-                  <el-tag :type="qualityScore >= 80 ? 'success' : 'danger'" effect="dark">
-                    {{ qualityScore >= 80 ? '合格' : '不合格' }}
+                  <el-tag :type="abnormalCount === 0 ? (qualityScore >= 80 ? 'success' : 'warning') : 'danger'" effect="dark">
+                    {{ abnormalCount > 0 ? '需复核/异常' : qualityScore >= 80 ? '合格' : '待人工确认' }}
                   </el-tag>
                 </div>
               </div>
@@ -230,7 +256,7 @@
             v-for="(item, index) in group"
             :key="index"
             class="qc-list-item"
-            :class="{ 'is-error': item.status === '不合格', 'is-success': item.status === '合格' }"
+            :class="{ 'is-error': item.status === '不合格', 'is-success': item.status === '合格', 'is-warning': item.status === '待人工确认' }"
             @click="viewDetails(item)"
           >
             <!-- 左侧：图标与状态 -->
@@ -247,7 +273,7 @@
                 <span class="item-name">{{ item.name }}</span>
                 <el-tag
                   size="small"
-                  :type="item.status === '合格' ? 'success' : 'danger'"
+                  :type="item.status === '合格' ? 'success' : (item.status === '待人工确认' ? 'warning' : 'danger')"
                   effect="light"
                   class="item-tag"
                 >
@@ -257,7 +283,7 @@
               <div class="item-desc">
                 {{ item.description }}
               </div>
-              <div class="item-detail-text" v-if="item.status === '不合格'">
+              <div class="item-detail-text" :class="{ 'is-warning': item.status === '待人工确认' }" v-if="item.status !== '合格'">
                 <span class="error-text"
                   ><el-icon><InfoFilled /></el-icon> {{ item.detail }}</span
                 >
@@ -276,7 +302,7 @@
     </div>
 
     <!--
-      @section 详情弹窗 (Mock)
+      @section 详情弹窗（模拟分析）
       展示单项质控指标的详细分析结果。
     -->
     <el-dialog v-model="dialogVisible" :title="currentItem?.name + ' - 详情分析'" width="50%">
@@ -284,7 +310,7 @@
         <el-descriptions border :column="1">
           <el-descriptions-item label="检测项">{{ currentItem.name }}</el-descriptions-item>
           <el-descriptions-item label="当前状态">
-            <el-tag :type="currentItem.status === '合格' ? 'success' : 'danger'">{{
+            <el-tag :type="currentItem.status === '合格' ? 'success' : (currentItem.status === '待人工确认' ? 'warning' : 'danger')">{{
               currentItem.status
             }}</el-tag>
           </el-descriptions-item>
@@ -294,14 +320,14 @@
           <el-descriptions-item label="详细日志">
             {{
               currentItem.status === '合格'
-                ? 'AI 算法扫描全序列，未检出异常特征值。'
-                : currentItem.detail + '，建议技师检查扫描参数或重新扫描。'
+                ? '规则分析未发现明显异常协议特征。'
+                : currentItem.detail + '，建议技师补齐参数或人工复核原始序列。'
             }}
           </el-descriptions-item>
         </el-descriptions>
 
         <div class="mock-image-placeholder">
-          <el-empty description="此处将显示相关层面的影像快照与AI标注" :image-size="120"></el-empty>
+          <el-empty description="当前阶段展示规则分析说明，不生成影像标注结果。" :image-size="120"></el-empty>
         </div>
       </div>
       <template #footer>
@@ -334,7 +360,7 @@
           </div>
         </el-col>
         <el-col :span="11">
-          <div class="choice-card pacs-select" @click="uploadMethodDialogVisible = false; simulatePacsSelect()">
+          <div class="choice-card pacs-select" @click="uploadMethodDialogVisible = false; openPacsSearch()">
             <div class="icon-wrapper">
               <el-icon><Connection /></el-icon>
             </div>
@@ -363,6 +389,24 @@
         <el-form-item label="检查 ID" prop="examId">
           <el-input v-model="uploadForm.examId" placeholder="请输入检查/住院号" />
         </el-form-item>
+        <el-form-item label="造影流速" prop="flowRate">
+          <el-input-number v-model="uploadForm.flowRate" :min="0" :max="10" :precision="1" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="造影总量" prop="contrastVolume">
+          <el-input-number v-model="uploadForm.contrastVolume" :min="0" :max="300" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="注射部位" prop="injectionSite">
+          <el-input v-model="uploadForm.injectionSite" placeholder="例如 右侧肘正中静脉" />
+        </el-form-item>
+        <el-form-item label="层厚" prop="sliceThickness">
+          <el-input-number v-model="uploadForm.sliceThickness" :min="0" :max="10" :precision="1" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="追踪阈值">
+          <el-input-number v-model="uploadForm.bolusTrackingHu" :min="0" :max="500" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="扫描延迟">
+          <el-input-number v-model="uploadForm.scanDelaySec" :min="0" :max="120" controls-position="right" style="width: 100%" />
+        </el-form-item>
 
         <el-form-item label="影像文件" required v-if="uploadMode === 'local'">
           <el-upload
@@ -375,12 +419,12 @@
             :on-change="handleDialogFileChange"
             :on-remove="handleDialogFileRemove"
             style="width: 100%"
-            accept=".dcm"
+            accept=".dcm,.dicom,.nii,.nii.gz,.zip"
           >
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-            <div class="el-upload__text">拖拽 DICOM 文件夹或 <em>点击上传</em></div>
+            <div class="el-upload__text">拖拽影像文件或 <em>点击上传</em></div>
             <template #tip>
-              <div class="el-upload__tip">支持 .dcm 序列文件，单次最大 500MB</div>
+              <div class="el-upload__tip">支持 .dcm / .dicom / .nii / .nii.gz / .zip 文件，单次最大 500MB</div>
             </template>
           </el-upload>
         </el-form-item>
@@ -398,6 +442,12 @@
         </span>
       </template>
     </el-dialog>
+
+    <PacsSearchDialog
+      v-model:visible="pacsSearchDialogVisible"
+      task-type="chest-contrast"
+      @select="handlePacsSelect"
+    />
   </div>
 </template>
 
@@ -406,11 +456,15 @@ import { computed } from 'vue'
 import { ArrowLeft, User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
 import { detectChestContrast } from '@/modules/qctask/api/qualityApi'
 import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
-import { buildChestContrastStaticPacsResult } from '@/utils/staticQualityPacs'
+import PacsSearchDialog from '@/components/PacsSearchDialog.vue'
 
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
+  flowRate: [{ required: true, message: '请输入造影流速', trigger: 'blur' }],
+  contrastVolume: [{ required: true, message: '请输入造影总量', trigger: 'blur' }],
+  injectionSite: [{ required: true, message: '请输入注射部位', trigger: 'blur' }],
+  sliceThickness: [{ required: true, message: '请输入层厚', trigger: 'blur' }],
 }
 
 const {
@@ -428,11 +482,15 @@ const {
   selectedFile,
   qcItems,
   patientInfo,
+  taskError,
+  analysisLabel,
   openUploadDialog,
   handleDialogFileChange,
   handleDialogFileRemove,
   submitUpload,
-  simulatePacsSelect,
+  pacsSearchDialogVisible,
+  openPacsSearch,
+  handlePacsSelect,
   resetUpload,
   viewDetails,
   handleReanalyze,
@@ -440,7 +498,16 @@ const {
 } = useAsyncQualityTaskPage({
   // 指定本页对应的异步质控接口。
   submitTask: detectChestContrast,
-  buildStaticPacsResult: buildChestContrastStaticPacsResult,
+  initialUploadForm: {
+    patientName: '',
+    examId: '',
+    flowRate: '',
+    contrastVolume: '',
+    injectionSite: '',
+    sliceThickness: '',
+    bolusTrackingHu: '',
+    scanDelaySec: '',
+  },
   // 胸部增强页面的患者默认字段。
   initialPatientInfo: {
     name: '',
@@ -455,23 +522,21 @@ const {
     flowRate: 0,
     contrastVolume: 0,
     injectionSite: '',
-  },
-  pacsPreset: {
-    patientName: '王某某',
-    examId: 'PACS_ENH_20231024',
+    bolusTrackingHu: 0,
+    scanDelaySec: 0,
   },
   // 胸部增强任务专属的进度步骤提示。
   analysisSteps: (form) => [
-    { progress: 10, msg: '正在解析增强 CT 序列...', step: 'DICOM 解析' },
-    { progress: 30, msg: '校验多时相序列完整性...', step: '完整性校验' },
+    { progress: 10, msg: '正在整理增强扫描协议参数...', step: '协议解析' },
+    { progress: 30, msg: '校验关键采集参数完整性...', step: '参数校验' },
     { progress: 45, msg: `提取患者元数据: ${form.patientName || '未知'}, ...`, step: '元数据提取', prefillPatientInfo: true },
-    { progress: 60, msg: 'AI 模型加载中 (Contrast_CT_QC_v1.8)...', step: '模型加载' },
-    { progress: 80, msg: '正在检测增强时机与静脉污染...', step: '特征提取' },
+    { progress: 60, msg: '正在执行增强协议规则分析...', step: '规则判定' },
+    { progress: 80, msg: '正在评估增强时机与静脉污染风险...', step: '规则判定' },
     { progress: 95, msg: '生成增强质控结构化报告...', step: '报告生成' },
   ],
   pacsLoadingMessage: '已连接 PACS 系统，正在检索今日检查列表...',
   pacsReadyMessage: '已自动获取 PACS 影像信息，请确认',
-  reanalyzeStartMessage: '正在请求云端重新计算...',
+  reanalyzeStartMessage: '正在重新执行规则分析...',
   reanalyzeSuccessMessage: '分析完成，数据已更新',
   exportMessage: '报告下载链接已生成，正在下载...',
 })
@@ -505,13 +570,28 @@ const groupedQcItems = computed(() => {
 })
 
 // 异常项数量由不合格项直接计数。
-const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
+const abnormalCount = computed(() => qcItems.value.filter((item) => item.status !== '合格').length)
+const failCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
+const reviewCount = computed(() => qcItems.value.filter((item) => item.status === '待人工确认').length)
 
 // 总评分按合格项占比换算。
 const qualityScore = computed(() => {
   if (qcItems.value.length === 0) return 0
   const passed = qcItems.value.filter((item) => item.status === '合格').length
   return Math.round((passed / qcItems.value.length) * 100)
+})
+
+const pageStatusLabel = computed(() => {
+  if (!qcItems.value.length) return '等待上传影像'
+  if (failCount.value > 0) return '存在异常项'
+  if (reviewCount.value > 0) return '待人工确认'
+  return '质控合格'
+})
+
+const pageStatusType = computed(() => {
+  if (failCount.value > 0) return 'danger'
+  if (reviewCount.value > 0) return 'warning'
+  return 'success'
 })
 
 // 仪表盘颜色映射。
@@ -528,6 +608,20 @@ const scoreColor = computed(() => {
   padding: 24px;
   background-color: #f5f7fa;
   min-height: calc(100vh - 84px); /* 减去顶部导航栏高度 */
+}
+
+.mock-notice {
+  margin-bottom: 24px;
+  border-radius: 16px;
+}
+
+.task-error-section {
+  margin-bottom: 24px;
+  padding: 12px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fffaf0 0%, #ffffff 100%);
+  border: 1px solid #f5dab1;
+  box-shadow: 0 14px 32px rgba(230, 162, 60, 0.12);
 }
 
 /* 页面头部 */
@@ -935,6 +1029,11 @@ const scoreColor = computed(() => {
   border-left: 4px solid #67c23a;
 }
 
+.qc-list-item.is-warning {
+  border-left: 4px solid #e6a23c;
+  background: #fff9eb;
+}
+
 .list-item-left {
   margin-right: 24px;
 }
@@ -957,6 +1056,11 @@ const scoreColor = computed(() => {
 .is-error .status-icon {
   color: #f56c6c;
   background: #fef0f0;
+}
+
+.is-warning .status-icon {
+  color: #e6a23c;
+  background: #fdf6ec;
 }
 
 .list-item-main {
@@ -995,6 +1099,11 @@ const scoreColor = computed(() => {
   padding: 4px 8px;
   border-radius: 4px;
   width: fit-content;
+}
+
+.item-detail-text.is-warning {
+  color: #b88230;
+  background: rgba(230, 162, 60, 0.12);
 }
 
 .list-item-right {

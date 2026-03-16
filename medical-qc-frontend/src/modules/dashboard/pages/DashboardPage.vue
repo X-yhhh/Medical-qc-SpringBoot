@@ -89,6 +89,7 @@
                   }}</el-tag>
                   <span class="recent-text">
                     <span class="recent-name">{{ item.name }}</span>
+                    <span v-if="item.meta" class="recent-meta">{{ item.meta }}</span>
                     <span :class="['recent-issue', item.tag === '合格' ? 'recent-issue-normal' : '']">{{ item.issue }}</span>
                   </span>
                   <span class="recent-time">{{ item.time }}</span>
@@ -175,7 +176,14 @@
                 <el-icon color="#F56C6C"><WarningFilled /></el-icon>
               </div>
               <div class="risk-content">
-                <div class="risk-text">{{ risk.content }}</div>
+                <div class="risk-head">
+                  <el-tag size="small" effect="dark" :type="resolveRiskPriorityType(risk.priority)">{{ risk.priority || '中危' }}</el-tag>
+                  <span class="risk-task">{{ risk.taskTypeName || '质控任务' }}</span>
+                  <el-tag v-if="risk.overdue" size="small" type="danger" effect="plain">已超期</el-tag>
+                </div>
+                <div class="risk-text">{{ risk.title || risk.content }}</div>
+                <div class="risk-meta">{{ risk.patientName }} · {{ risk.examId }}</div>
+                <div class="risk-desc">{{ risk.description || '请及时处理风险工单' }}</div>
                 <div class="risk-time">{{ risk.time }}</div>
               </div>
               <el-button type="primary" link size="small" style="margin-left: 15px" @click="$router.push(risk.targetRoute || '/issues')">处理</el-button>
@@ -511,6 +519,12 @@ const handleQuickAccessHeaderClick = () => {
   router.push('/quality-tasks')
 }
 
+const resolveRiskPriorityType = (priority) => {
+  if (priority === '高') return 'danger'
+  if (priority === '中') return 'warning'
+  return 'info'
+}
+
 /**
  * 加载首页质控合格率趋势图数据。
  */
@@ -688,7 +702,7 @@ onUnmounted(() => {
 /* 页面整体容器 */
 .dashboard-container {
   padding: 24px;
-  background-color: #f5f7fa;
+  background: transparent;
   min-height: calc(100vh - 60px);
 }
 
@@ -698,10 +712,11 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 24px;
-  background: #fff;
+  background: linear-gradient(135deg, #ffffff 0%, #f6faff 100%);
   padding: 20px 24px;
-  border-radius: 8px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+  border-radius: 20px;
+  border: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
 }
 
 .welcome-text h2 {
@@ -732,14 +747,15 @@ onUnmounted(() => {
 .stats-card {
   display: flex;
   align-items: center;
-  border: none;
-  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 18px;
+  background: var(--app-panel);
   transition: all 0.3s;
 }
 
 .stats-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--app-shadow-md);
 }
 
 :deep(.el-card__body) {
@@ -825,6 +841,14 @@ onUnmounted(() => {
   align-items: center;
 }
 
+.box-card,
+.risk-card {
+  border: 1px solid var(--app-border);
+  border-radius: 18px;
+  box-shadow: var(--app-shadow-sm);
+  overflow: hidden;
+}
+
 .header-title {
   font-size: 16px;
   font-weight: 600;
@@ -852,7 +876,7 @@ onUnmounted(() => {
 /* 右侧侧边栏 - 填充空白 */
 .quick-access-sidebar {
   width: 280px;
-  border-left: 1px solid #ebeef5;
+  border-left: 1px solid var(--app-border);
   padding-left: 20px;
   padding-top: 10px;
   display: flex;
@@ -868,7 +892,7 @@ onUnmounted(() => {
 
 .sidebar-divider {
   height: 1px;
-  background-color: #ebeef5;
+  background-color: var(--app-border);
   margin: 16px 0;
 }
 
@@ -885,7 +909,10 @@ onUnmounted(() => {
   font-size: 13px;
   color: #606266;
   cursor: pointer;
-  padding: 4px 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  transition: all 0.24s ease;
 }
 
 .recent-image {
@@ -912,6 +939,8 @@ onUnmounted(() => {
 
 .recent-item:hover {
   color: #409eff;
+  background: #f8fbff;
+  border-color: var(--app-border);
 }
 
 .recent-tag {
@@ -923,7 +952,7 @@ onUnmounted(() => {
   flex: 1;
   overflow: hidden;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   margin-right: 8px;
   min-width: 0;
 }
@@ -935,11 +964,21 @@ onUnmounted(() => {
   flex-shrink: 1;
 }
 
+.recent-meta {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #909399;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .recent-issue {
   color: #f56c6c;
-  margin-left: 6px;
+  margin-top: 2px;
   white-space: nowrap;
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .recent-issue-normal {
@@ -963,8 +1002,8 @@ onUnmounted(() => {
 }
 
 .quick-access-item {
-  background: #f8f9fa;
-  border-radius: 8px;
+  background: linear-gradient(180deg, #f9fbff 0%, #ffffff 100%);
+  border-radius: 16px;
   padding: 20px;
   cursor: pointer;
   transition: all 0.3s;
@@ -972,14 +1011,14 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  border: 1px solid #ebeef5;
+  border: 1px solid var(--app-border);
 }
 
 .quick-access-item:hover {
   background: #fff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--app-shadow-md);
   transform: translateY(-2px);
-  border-color: #dcdfe6;
+  border-color: var(--app-border-strong);
 }
 
 .icon-wrapper {
@@ -1045,11 +1084,37 @@ onUnmounted(() => {
   flex: 1;
 }
 
+.risk-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.risk-task {
+  font-size: 12px;
+  color: #909399;
+}
+
 .risk-text {
   font-size: 14px;
-  color: #606266;
+  color: #303133;
+  font-weight: 600;
   line-height: 1.4;
   margin-bottom: 4px;
+}
+
+.risk-meta {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 4px;
+}
+
+.risk-desc {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 
 .risk-time {
@@ -1067,15 +1132,15 @@ onUnmounted(() => {
 
 .trend-summary-item {
   background: #f8fafc;
-  border: 1px solid #ebeef5;
-  border-radius: 10px;
+  border: 1px solid var(--app-border);
+  border-radius: 14px;
   padding: 14px 16px;
   transition: all 0.3s;
 }
 
 .trend-summary-item:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--app-shadow-sm);
 }
 
 .trend-summary-item.is-primary {

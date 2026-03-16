@@ -2,7 +2,7 @@
   @file HeadQualityPage.vue
   @description CT头部平扫质控主页面
   主要功能:
-  1. 影像上传: 支持本地影像上传和 PACS 模拟调取。
+  1. 影像上传: 支持本地影像上传和 PACS 调取。
   2. 异步分析: 提交后端质控任务，前端自动轮询任务状态并展示进度。
   3. 结果展示: 患者信息、质控评分、质控项列表。
   4. 交互: 重新分析、导出报告、查看详情。
@@ -27,8 +27,8 @@
         <h2 class="page-title">
           CT头部平扫智能质控
           <!-- 状态标签: 根据是否有质控结果显示不同状态 -->
-          <el-tag v-if="qcItems.length > 0" type="primary" effect="plain" class="status-tag"
-            >AI 自动分析完成</el-tag
+          <el-tag v-if="qcItems.length > 0" :type="pageStatusType" effect="plain" class="status-tag"
+            >{{ pageStatusLabel }}</el-tag
           >
           <el-tag v-else type="info" effect="plain" class="status-tag">等待上传影像</el-tag>
         </h2>
@@ -51,7 +51,19 @@
       1. 上传与分析区域 (当没有质控数据时显示)
       包含: 正在分析的动画状态、上传方式选择(本地/PACS)
     -->
-    <div v-if="qcItems.length === 0" class="upload-section">
+    <div v-if="taskError && !analyzing" class="task-error-section">
+      <el-result
+        icon="error"
+        title="头部平扫真实模型推理失败"
+        :sub-title="taskError"
+      >
+        <template #extra>
+          <el-button type="primary" @click="handleReanalyze">重新分析</el-button>
+          <el-button @click="resetUpload">重新上传</el-button>
+        </template>
+      </el-result>
+    </div>
+    <div v-else-if="qcItems.length === 0" class="upload-section">
       <div class="upload-wrapper">
         <transition name="fade" mode="out-in">
           <!-- 状态 A: AI 智能分析中 (显示进度条和日志) -->
@@ -92,14 +104,14 @@
                     <el-icon><FolderOpened /></el-icon>
                   </div>
                   <h3>本地影像上传</h3>
-                  <p>支持 DICOM 文件夹拖拽上传</p>
-                  <p class="sub-tip">自动解析 .dcm 序列文件</p>
+                  <p>支持 DICOM / NIfTI / ZIP 影像上传</p>
+                  <p class="sub-tip">支持 .dcm / .nii / .nii.gz / .zip 头部平扫数据</p>
                 </div>
               </el-col>
 
               <!-- PACS 入口卡片: 模拟连接医院 PACS 系统 -->
               <el-col :span="10">
-                <div class="choice-card pacs-select" @click="simulatePacsSelect">
+                <div class="choice-card pacs-select" @click="openPacsSearch">
                   <div class="icon-wrapper">
                     <el-icon><Connection /></el-icon>
                   </div>
@@ -136,26 +148,28 @@
                   ><el-icon><User /></el-icon> 患者检查信息</span
                 >
                 <el-tag size="small" type="info"
-                  >Accession No: {{ patientInfo.accessionNumber }}</el-tag
+                  >Accession No: {{ patientInfo.accessionNumber || '--' }}</el-tag
                 >
               </div>
             </template>
             <el-descriptions :column="3" border>
-              <el-descriptions-item label="姓名">{{ patientInfo.name }}</el-descriptions-item>
-              <el-descriptions-item label="性别">{{ patientInfo.gender }}</el-descriptions-item>
-              <el-descriptions-item label="年龄">{{ patientInfo.age }}岁</el-descriptions-item>
-              <el-descriptions-item label="检查ID">{{ patientInfo.studyId }}</el-descriptions-item>
+              <el-descriptions-item label="姓名">{{ patientInfo.name || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="患者编号">{{ patientInfo.patientId || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="性别">{{ patientInfo.gender || '--' }}</el-descriptions-item>
+              <el-descriptions-item label="年龄">{{ formatPatientAge(patientInfo.age) }}</el-descriptions-item>
+              <el-descriptions-item label="检查ID">{{ patientInfo.studyId || '--' }}</el-descriptions-item>
               <el-descriptions-item label="检查日期">{{
-                patientInfo.studyDate
+                patientInfo.studyDate || '--'
               }}</el-descriptions-item>
-              <el-descriptions-item label="设备型号">{{ patientInfo.device }}</el-descriptions-item>
+              <el-descriptions-item label="设备型号">{{ patientInfo.device || '--' }}</el-descriptions-item>
               <el-descriptions-item label="扫描部位">Head Routine</el-descriptions-item>
               <el-descriptions-item label="图像层数"
-                >{{ patientInfo.sliceCount }} 层</el-descriptions-item
+                >{{ patientInfo.sliceCount || '--' }} 层</el-descriptions-item
               >
               <el-descriptions-item label="层厚"
-                >{{ patientInfo.sliceThickness }} mm</el-descriptions-item
+                >{{ patientInfo.sliceThickness || '--' }} mm</el-descriptions-item
               >
+              <el-descriptions-item label="分析模式">{{ analysisLabel || '真实模型推理' }}</el-descriptions-item>
             </el-descriptions>
           </el-card>
         </el-col>
@@ -186,8 +200,8 @@
                 </div>
                 <div class="summary-result">
                   综合判定:
-                  <el-tag :type="qualityScore >= 80 ? 'success' : 'danger'" effect="dark">
-                    {{ qualityScore >= 80 ? '合格' : '不合格' }}
+                  <el-tag :type="abnormalCount === 0 ? (qualityScore >= 80 ? 'success' : 'warning') : 'danger'" effect="dark">
+                    {{ abnormalCount > 0 ? '需复核/异常' : qualityScore >= 80 ? '合格' : '待人工确认' }}
                   </el-tag>
                 </div>
               </div>
@@ -216,7 +230,7 @@
           v-for="(item, index) in qcItems"
           :key="index"
           class="qc-list-item"
-          :class="{ 'is-error': item.status === '不合格', 'is-success': item.status === '合格' }"
+          :class="{ 'is-error': item.status !== '合格', 'is-success': item.status === '合格' }"
           @click="viewDetails(item)"
         >
           <!-- 左侧：图标与状态 -->
@@ -233,7 +247,7 @@
               <span class="item-name">{{ item.name }}</span>
               <el-tag
                 size="small"
-                :type="item.status === '合格' ? 'success' : 'danger'"
+                :type="item.status === '合格' ? 'success' : item.status === '待人工确认' ? 'warning' : 'danger'"
                 effect="light"
                 class="item-tag"
               >
@@ -244,7 +258,7 @@
               {{ item.description }}
             </div>
             <!-- 异常详情提示 -->
-            <div class="item-detail-text" v-if="item.status === '不合格'">
+            <div class="item-detail-text" v-if="item.status !== '合格'">
               <span class="error-text"
                 ><el-icon><InfoFilled /></el-icon> {{ item.detail }}</span
               >
@@ -261,13 +275,13 @@
       </div>
     </div>
 
-    <!-- 详情弹窗 (Mock展示) -->
+    <!-- 详情弹窗，优先展示真实模型链路返回的说明信息。 -->
     <el-dialog v-model="dialogVisible" :title="currentItem?.name + ' - 详情分析'" width="50%">
       <div v-if="currentItem" class="dialog-content">
         <el-descriptions border :column="1">
           <el-descriptions-item label="检测项">{{ currentItem.name }}</el-descriptions-item>
           <el-descriptions-item label="当前状态">
-            <el-tag :type="currentItem.status === '合格' ? 'success' : 'danger'">{{
+            <el-tag :type="currentItem.status === '合格' ? 'success' : currentItem.status === '待人工确认' ? 'warning' : 'danger'">{{
               currentItem.status
             }}</el-tag>
           </el-descriptions-item>
@@ -277,14 +291,14 @@
           <el-descriptions-item label="详细日志">
             {{
               currentItem.status === '合格'
-                ? 'AI 算法扫描全序列，未检出异常特征值。'
-                : currentItem.detail + '，建议技师检查扫描参数或重新扫描。'
+                ? '真实模型推理未检出异常特征。'
+                : currentItem.detail + '，建议结合原始影像、扫描参数与患者信息人工复核。'
             }}
           </el-descriptions-item>
         </el-descriptions>
 
         <div class="mock-image-placeholder">
-          <el-empty description="此处将显示相关层面的影像快照与AI标注" :image-size="120"></el-empty>
+          <el-empty description="当前版本暂未输出关键切片快照，后续将在此挂接真实模型定位结果。" :image-size="120"></el-empty>
         </div>
       </div>
       <template #footer>
@@ -317,7 +331,7 @@
           </div>
         </el-col>
         <el-col :span="11">
-          <div class="choice-card pacs-select" @click="uploadMethodDialogVisible = false; simulatePacsSelect()">
+          <div class="choice-card pacs-select" @click="uploadMethodDialogVisible = false; openPacsSearch()">
             <div class="icon-wrapper">
               <el-icon><Connection /></el-icon>
             </div>
@@ -340,8 +354,31 @@
         <el-form-item label="患者姓名" prop="patientName">
           <el-input v-model="uploadForm.patientName" placeholder="请输入患者姓名" />
         </el-form-item>
+        <el-form-item label="患者编号" prop="patientId">
+          <el-input v-model="uploadForm.patientId" placeholder="请输入患者编号（选填）" />
+        </el-form-item>
         <el-form-item label="检查 ID" prop="examId">
           <el-input v-model="uploadForm.examId" placeholder="请输入检查/住院号" />
+        </el-form-item>
+        <el-form-item label="性别" prop="gender">
+          <el-select v-model="uploadForm.gender" placeholder="请选择性别" style="width: 100%">
+            <el-option label="男" value="男" />
+            <el-option label="女" value="女" />
+            <el-option label="未说明" value="未说明" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="年龄" prop="age">
+          <el-input-number v-model="uploadForm.age" :min="0" :max="150" controls-position="right" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="检查日期" prop="studyDate">
+          <el-date-picker
+            v-model="uploadForm.studyDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            format="YYYY-MM-DD"
+            placeholder="请选择检查日期"
+            style="width: 100%"
+          />
         </el-form-item>
 
         <!-- 本地上传模式 -->
@@ -356,12 +393,12 @@
             :on-change="handleDialogFileChange"
             :on-remove="handleDialogFileRemove"
             style="width: 100%"
-            accept=".dcm"
+            accept=".dcm,.dicom,.nii,.nii.gz,.zip"
           >
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-            <div class="el-upload__text">拖拽 DICOM 文件夹或 <em>点击上传</em></div>
+            <div class="el-upload__text">拖拽影像文件或 <em>点击上传</em></div>
             <template #tip>
-              <div class="el-upload__tip">支持 .dcm 序列文件，单次最大 500MB</div>
+              <div class="el-upload__tip">支持 .dcm / .dicom / .nii / .nii.gz / .zip 文件，单次最大 500MB</div>
             </template>
           </el-upload>
         </el-form-item>
@@ -380,6 +417,12 @@
         </span>
       </template>
     </el-dialog>
+
+    <PacsSearchDialog
+      v-model:visible="pacsSearchDialogVisible"
+      task-type="head"
+      @select="handlePacsSelect"
+    />
   </div>
 </template>
 
@@ -404,12 +447,15 @@ import {
 } from '@element-plus/icons-vue'
 import { detectHead } from '@/modules/qctask/api/qualityApi'
 import { useAsyncQualityTaskPage } from '@/composables/useAsyncQualityTaskPage'
-import { buildHeadStaticPacsResult } from '@/utils/staticQualityPacs'
+import PacsSearchDialog from '@/components/PacsSearchDialog.vue'
 
 // 上传弹窗校验规则，对齐后端 head 质控任务的最小输入要求。
 const uploadRules = {
   patientName: [{ required: true, message: '请输入患者姓名', trigger: 'blur' }],
   examId: [{ required: true, message: '请输入检查ID', trigger: 'blur' }],
+  gender: [{ required: true, message: '请选择性别', trigger: 'change' }],
+  age: [{ required: true, message: '请输入年龄', trigger: 'change' }],
+  studyDate: [{ required: true, message: '请选择检查日期', trigger: 'change' }],
 }
 
 // 当前页面的大部分上传、轮询和结果回填逻辑都复用通用异步质控组合函数。
@@ -428,11 +474,15 @@ const {
   selectedFile,
   qcItems,
   patientInfo,
+  taskError,
+  analysisLabel,
   openUploadDialog,
   handleDialogFileChange,
   handleDialogFileRemove,
   submitUpload,
-  simulatePacsSelect,
+  pacsSearchDialogVisible,
+  openPacsSearch,
+  handlePacsSelect,
   resetUpload,
   viewDetails,
   handleReanalyze,
@@ -440,12 +490,12 @@ const {
 } = useAsyncQualityTaskPage({
   // 指定本页使用的任务提交接口。
   submitTask: detectHead,
-  buildStaticPacsResult: buildHeadStaticPacsResult,
   // 头部平扫页面的默认患者信息结构。
   initialPatientInfo: {
+    patientId: '',
     name: '',
     gender: '',
-    age: 0,
+    age: null,
     studyId: '',
     accessionNumber: '',
     studyDate: '',
@@ -453,15 +503,20 @@ const {
     sliceCount: 0,
     sliceThickness: 0,
   },
-  // PACS 演示模式下预填的示例检查号。
-  pacsPreset: {
-    patientName: '王某某',
-    examId: 'PACS_AUTO_20231024',
+  // 上传表单与后端 multipart 字段保持一致，确保真实链路提交时患者字段完整。
+  initialUploadForm: {
+    patientId: '',
+    patientName: '',
+    examId: '',
+    gender: '',
+    age: null,
+    studyDate: '',
   },
+  // PACS 演示模式下预填的示例检查号。
   // 头部平扫任务专属的前端进度步骤文案。
   analysisSteps: (form) => [
-    { progress: 10, msg: '正在读取 DICOM 文件头信息...', step: 'DICOM 解析' },
-    { progress: 30, msg: '校验序列完整性 (240/240 slices)...', step: '完整性校验' },
+    { progress: 10, msg: '正在读取影像序列头信息...', step: '影像解析' },
+    { progress: 30, msg: '校验三维体数据尺寸与 spacing / DICOM 元数据...', step: '完整性校验' },
     { progress: 45, msg: `提取患者元数据: ${form.patientName || '未知'}, ...`, step: '元数据提取', prefillPatientInfo: true },
     { progress: 60, msg: 'AI 模型加载中 (Head_CT_QC_v2.1)...', step: '模型加载' },
     { progress: 80, msg: '正在检测运动伪影与金属伪影...', step: '特征提取' },
@@ -475,7 +530,9 @@ const {
 })
 
 // 异常项数量直接由质控项列表中“不合格”项计数得出。
-const abnormalCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
+const abnormalCount = computed(() => qcItems.value.filter((item) => item.status !== '合格').length)
+const failCount = computed(() => qcItems.value.filter((item) => item.status === '不合格').length)
+const reviewCount = computed(() => qcItems.value.filter((item) => item.status === '待人工确认').length)
 
 // 页面总评分按“合格项占比”计算，作为展示层简化分值。
 const qualityScore = computed(() => {
@@ -484,12 +541,28 @@ const qualityScore = computed(() => {
   return Math.round((passed / qcItems.value.length) * 100)
 })
 
+const pageStatusLabel = computed(() => {
+  if (!qcItems.value.length) return '等待上传影像'
+  if (failCount.value > 0) return '存在异常项'
+  if (reviewCount.value > 0) return '待人工确认'
+  return '质控合格'
+})
+
+const pageStatusType = computed(() => {
+  if (failCount.value > 0) return 'danger'
+  if (reviewCount.value > 0) return 'warning'
+  return 'success'
+})
+
 // 仪表盘颜色随评分档位变化。
 const scoreColor = computed(() => {
   if (qualityScore.value >= 90) return '#67C23A'
   if (qualityScore.value >= 60) return '#E6A23C'
   return '#F56C6C'
 })
+
+// 年龄为空时统一回退为占位文本，避免结果页出现“null岁”。
+const formatPatientAge = (age) => (age === null || age === undefined || age === '' ? '--' : `${age}岁`)
 </script>
 
 <style scoped>
@@ -497,6 +570,15 @@ const scoreColor = computed(() => {
   padding: 24px;
   background-color: #f5f7fa;
   min-height: calc(100vh - 84px); /* 减去顶部导航栏高度 */
+}
+
+.task-error-section {
+  margin-bottom: 24px;
+  padding: 12px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fff6f6 0%, #ffffff 100%);
+  border: 1px solid #fbd2d5;
+  box-shadow: 0 14px 32px rgba(245, 108, 108, 0.12);
 }
 
 /* 页面头部 */

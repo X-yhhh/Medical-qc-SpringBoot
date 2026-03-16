@@ -41,7 +41,19 @@
       - 本地文件上传入口
       - PACS 系统检索入口
     -->
-    <div v-if="qcItems.length === 0" class="upload-section">
+    <div v-if="taskError && !analyzing" class="task-error-section">
+      <el-result
+        icon="error"
+        title="头部出血真实模型推理失败"
+        :sub-title="taskError"
+      >
+        <template #extra>
+          <el-button type="primary" @click="handleReanalyze">重新分析</el-button>
+          <el-button @click="resetUpload">重新上传</el-button>
+        </template>
+      </el-result>
+    </div>
+    <div v-else-if="qcItems.length === 0" class="upload-section">
       <div class="upload-wrapper">
         <!-- 正在分析的状态：显示进度条与日志 -->
         <transition name="fade" mode="out-in">
@@ -433,7 +445,7 @@ import { ref, computed, reactive, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { User, Upload, Refresh, Download, FolderOpened, Connection, InfoFilled, Aim, Picture, UploadFilled, List, CircleCheckFilled, WarningFilled, ArrowRight } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { predictHemorrhage, getHemorrhageHistory, getHemorrhageRecord } from '@/modules/qctask/api/qualityApi'
+import { predictHemorrhage, getHemorrhageHistory, getHemorrhageRecord, exportHemorrhageReport } from '@/modules/qctask/api/qualityApi'
 import PacsSearchDialog from '@/components/PacsSearchDialog.vue'
 import '@/assets/css/hemorrhage-scan.css'
 
@@ -457,6 +469,7 @@ const uploadMethodDialogVisible = ref(false)
 // --- 结果数据 ---
 // qcItems 是页面主结果列表的数据源，其余字段服务于顶部卡片和详情弹窗。
 const qcItems = ref([])
+const taskError = ref('')
 const hasHemorrhage = ref(false)
 const hemorrhageProb = ref(0)
 const primaryIssue = ref('未见明显异常')
@@ -467,6 +480,7 @@ const bboxes = ref([])
 const confidenceLevel = ref('--')
 const imageMeta = ref({ width: 0, height: 0 })
 const recordCreatedAt = ref('')
+const currentRecordId = ref(null)
 // 页面中的固定展示常量。
 const scanRegion = '头颅平扫'
 const scannerModel = '头颅 CT 标准采集设备'
@@ -744,6 +758,7 @@ const normalizeBboxes = (rawBboxes) => {
  */
 const clearHemorrhageResult = () => {
   qcItems.value = []
+  taskError.value = ''
   hasHemorrhage.value = false
   hemorrhageProb.value = 0
   primaryIssue.value = '未见明显异常'
@@ -755,6 +770,7 @@ const clearHemorrhageResult = () => {
   imageMeta.value = { width: 0, height: 0 }
   patientInfo.value = createDefaultPatientInfo()
   recordCreatedAt.value = ''
+  currentRecordId.value = null
   currentItem.value = null
 }
 
@@ -836,6 +852,7 @@ const normalizeHemorrhagePayload = (source = {}) => {
     : toBoolean(rawResult?.ventricle_issue)
 
   const normalizedPayload = {
+    record_id: resolveOptionalNumber(source?.id, source?.record_id, rawResult?.record_id),
     prediction,
     qc_status: resolveText(source?.qcStatus, rawResult?.qc_status),
     source_mode: resolveSourceMode(
@@ -909,6 +926,7 @@ const applyHemorrhageResult = (resultPayload) => {
     : normalizeImageUrl(resultPayload.image_url)
 
   analyzing.value = false
+  taskError.value = ''
   hasHemorrhage.value = resultPayload.prediction === '出血'
   hemorrhageProb.value = Number.isFinite(probabilityPercent) ? probabilityPercent : 0
   primaryIssue.value = resolvePrimaryIssue(resultPayload)
@@ -931,6 +949,7 @@ const applyHemorrhageResult = (resultPayload) => {
     device: resolveText(resultPayload.scanner_model, scannerModel) || scannerModel,
   }
   recordCreatedAt.value = formatDateTime(resultPayload.created_at)
+  currentRecordId.value = resolveOptionalNumber(resultPayload.record_id)
   uploadForm.patientName = patientInfo.value.name === '--' ? '' : patientInfo.value.name
   uploadForm.patientCode = patientInfo.value.patientCode === '--' ? '' : patientInfo.value.patientCode
   uploadForm.examId = patientInfo.value.examId === '--' ? '' : patientInfo.value.examId
@@ -1147,44 +1166,23 @@ const handleReanalyze = () => {
  * @description 导出当前案例的真实检测报告
  */
 const handleExport = () => {
-  if (!qcItems.value.length) {
+  if (!qcItems.value.length || !currentRecordId.value) {
     ElMessage.warning('暂无可导出的检测报告')
     return
   }
-
-  // 当前导出逻辑直接在前端拼装文本报告，保证与页面展示保持一致。
-  const reportLines = [
-    '头部出血 AI 智能检测报告',
-    `导出时间：${formatDateTime(new Date())}`,
-    '',
-    `患者姓名：${patientInfo.value.name}`,
-    `患者编号：${patientInfo.value.patientCode}`,
-    `检查编号：${patientInfo.value.examId}`,
-    `性别：${patientInfo.value.gender}`,
-    `年龄：${formatAge(patientInfo.value.age)}`,
-    `检查日期：${patientInfo.value.studyDate}`,
-    `设备型号：${patientInfo.value.device}`,
-    `推理设备：${normalizeInferenceDevice()}`,
-    `检测模型：${modelName.value}`,
-    `结果时间：${recordCreatedAt.value || '--'}`,
-    '',
-    `AI 判定：${hasHemorrhage.value ? '疑似出血' : '未见异常'}`,
-    `主要异常：${primaryIssue.value}`,
-    `出血风险：${hemorrhageProb.value.toFixed(1)}%`,
-    `置信度：${confidenceLevel.value}`,
-    '',
-    '检测详情：',
-    ...qcItems.value.map((item, index) => `${index + 1}. ${item.name} - ${item.status} - ${item.detail}`),
-  ]
-
-  const blob = new Blob([reportLines.join('\r\n')], { type: 'text/plain;charset=utf-8;' })
-  const url = window.URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `脑出血检测报告_${patientInfo.value.examId || 'report'}_${Date.now()}.txt`
-  link.click()
-  window.URL.revokeObjectURL(url)
-  ElMessage.success('报告导出成功')
+  exportHemorrhageReport(currentRecordId.value)
+    .then((blob) => {
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `脑出血检测报告_${patientInfo.value.examId || currentRecordId.value}.docx`
+      link.click()
+      window.URL.revokeObjectURL(url)
+      ElMessage.success('报告导出成功')
+    })
+    .catch((error) => {
+      ElMessage.error(error.message || '导出报告失败')
+    })
 }
 
 /**
@@ -1256,6 +1254,7 @@ const startAnalysisProcess = async () => {
 
   // 新分析开始前先清空旧结果，避免页面短暂显示旧病例数据。
   qcItems.value = []
+  taskError.value = ''
   analyzing.value = true
   analyzeProgress.value = 0
   analysisLogs.value = []
@@ -1320,6 +1319,7 @@ const startAnalysisProcess = async () => {
     analyzing.value = false
 
     const errorMessage = error?.message || '分析失败'
+    taskError.value = errorMessage
     ElMessage.error(errorMessage)
     addLog(`错误: ${errorMessage}`)
   }
@@ -1360,6 +1360,15 @@ watch(() => route.query.recordId, () => {
   padding: 24px;
   background-color: #f5f7fa;
   min-height: calc(100vh - 84px);
+}
+
+.task-error-section {
+  margin-bottom: 24px;
+  padding: 12px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fff6f6 0%, #ffffff 100%);
+  border: 1px solid #fbd2d5;
+  box-shadow: 0 14px 32px rgba(245, 108, 108, 0.12);
 }
 
 .page-header {

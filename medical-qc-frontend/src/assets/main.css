@@ -1,35 +1,13 @@
 @import './base.css';
 
+/* 应用根节点不再沿用 Vue 模板的居中卡片布局，而是恢复为全宽后台容器。 */
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  font-weight: normal;
+  width: 100%;
+  min-height: 100vh;
 }
 
-a,
-.green {
-  text-decoration: none;
-  color: hsla(160, 100%, 37%, 1);
-  transition: 0.4s;
-  padding: 3px;
-}
-
-@media (hover: hover) {
-  a:hover {
-    background-color: hsla(160, 100%, 37%, 0.2);
-  }
-}
-
-@media (min-width: 1024px) {
-  body {
-    display: flex;
-    place-items: center;
-  }
-
-  #app {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    padding: 0 2rem;
-  }
+/* 为 Element Plus 页面提供更稳定的内容区留白。 */
+.app-page-shell {
+  width: 100%;
+  padding: 24px;
 }

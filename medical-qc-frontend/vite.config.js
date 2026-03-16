@@ -40,7 +40,9 @@ export default defineConfig({
   },
   // 👇 必须添加 server.proxy 配置
   server: {
+    host: '127.0.0.1',
     port: 5173, // 前端端口 (禁止修改)
+    strictPort: true,
     proxy: {
       '/api/v1': {
         target: 'http://localhost:8080', // Spring Boot 后端地址

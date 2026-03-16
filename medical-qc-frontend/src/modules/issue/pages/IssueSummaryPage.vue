@@ -146,7 +146,22 @@
             <el-tag effect="light" type="info">{{ row.type }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="description" label="异常描述" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="description" label="异常描述" min-width="260">
+          <template #default="{ row }">
+            <div class="issue-description-cell">
+              <div class="issue-description-text">{{ row.description || '请及时复核并推进工单流转' }}</div>
+              <div class="issue-description-meta">
+                <span class="issue-description-meta__item">{{ row.type || '质控任务' }}</span>
+                <span class="issue-description-meta__divider">·</span>
+                <span
+                  :class="['issue-description-meta__item', row.overdue ? 'is-danger' : 'is-warning']"
+                >
+                  {{ row.overdue ? '已超期，建议优先处理' : '存在待复核风险' }}
+                </span>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="issueType" label="主异常项" width="140" align="center">
           <template #default="{ row }">
             <el-tag :type="row.priority === '高' ? 'danger' : row.priority === '中' ? 'warning' : 'info'" effect="light">
@@ -259,42 +274,15 @@
             </el-descriptions>
           </template>
           <template v-else>
-            <el-descriptions :column="2" border class="info-descriptions">
-              <el-descriptions-item label="记录ID">{{ currentSourceDetail.recordId || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="任务ID">{{ currentSourceDetail.taskId || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="任务类型">{{ currentSourceDetail.taskTypeName || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="质控结论">{{ currentSourceDetail.qcStatus || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="来源模式">{{ currentSourceDetail.sourceModeLabel || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="检测时间">{{ currentSourceDetail.createdAt || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="质控评分">{{ currentSourceDetail.qualityScore ?? '--' }}</el-descriptions-item>
-              <el-descriptions-item label="异常项数">{{ currentSourceDetail.abnormalCount ?? 0 }}</el-descriptions-item>
-              <el-descriptions-item label="主异常项">{{ currentSourceDetail.primaryIssue || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="设备">{{ currentSourceDetail.device || qualityTaskPatientInfo.device || '--' }}</el-descriptions-item>
-            </el-descriptions>
-
-            <el-descriptions v-if="Object.keys(qualityTaskPatientInfo).length" :column="3" border class="info-descriptions">
-              <el-descriptions-item label="患者姓名">{{ qualityTaskPatientInfo.name || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="性别">{{ qualityTaskPatientInfo.gender || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="年龄">{{ qualityTaskPatientInfo.age ?? '--' }}</el-descriptions-item>
-              <el-descriptions-item label="检查ID">{{ qualityTaskPatientInfo.studyId || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="Accession No">{{ qualityTaskPatientInfo.accessionNumber || '--' }}</el-descriptions-item>
-              <el-descriptions-item label="检查日期">{{ qualityTaskPatientInfo.studyDate || '--' }}</el-descriptions-item>
-            </el-descriptions>
-
-            <div v-if="qualityTaskQcItems.length" class="task-qc-list">
-              <div
-                v-for="(item, index) in qualityTaskQcItems"
-                :key="`${item.name}-${index}`"
-                :class="['task-qc-item', item.status === '不合格' ? 'is-error' : 'is-success']"
-              >
-                <div class="task-qc-item__header">
-                  <span class="task-qc-item__name">{{ item.name }}</span>
-                  <el-tag :type="item.status === '合格' ? 'success' : 'danger'" effect="light">{{ item.status }}</el-tag>
-                </div>
-                <div class="task-qc-item__desc">{{ item.description || '--' }}</div>
-                <div v-if="item.detail" class="task-qc-item__detail">{{ item.detail }}</div>
-              </div>
-            </div>
+            <QualityTaskResultDetail
+              source-title="原始检测记录"
+              :source-fields="qualityTaskSourceFields"
+              :patient-info="qualityTaskPatientInfo"
+              :summary="qualityTaskSummary"
+              :overall-status="qualityTaskSummary.result"
+              :primary-issue="qualityTaskSummary.primaryIssue || currentRow.issueType"
+              :qc-items="qualityTaskQcItems"
+            />
           </template>
         </div>
 
@@ -421,7 +409,9 @@ import {
   CaretTop, CaretBottom, Picture, FolderOpened
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import QualityTaskResultDetail from '@/components/QualityTaskResultDetail.vue'
 import {
+  exportIssues,
   getSummaryStats,
   getIssueTrend,
   getIssueDistribution,
@@ -483,7 +473,27 @@ const statsCards = computed(() => [
 const currentSourceDetail = computed(() => currentRow.value?.sourceDetail || null)
 const isHemorrhageSourceDetail = computed(() => currentSourceDetail.value?.detailType === 'hemorrhage')
 const qualityTaskPatientInfo = computed(() => currentSourceDetail.value?.patientInfo || {})
+const qualityTaskSummary = computed(() => ({
+  ...(currentSourceDetail.value?.summary || {}),
+  result: currentSourceDetail.value?.qcStatus || currentSourceDetail.value?.summary?.result,
+  primaryIssue: currentSourceDetail.value?.primaryIssue || currentRow.value?.issueType,
+}))
 const qualityTaskQcItems = computed(() => (Array.isArray(currentSourceDetail.value?.qcItems) ? currentSourceDetail.value.qcItems : []))
+const qualityTaskSourceFields = computed(() => ([
+  { key: 'recordId', label: '记录ID', value: currentSourceDetail.value?.recordId },
+  { key: 'taskId', label: '任务ID', value: currentSourceDetail.value?.taskId },
+  { key: 'taskTypeName', label: '任务类型', value: currentSourceDetail.value?.taskTypeName },
+  { key: 'qcStatus', label: '质控结论', value: currentSourceDetail.value?.qcStatus },
+  { key: 'sourceModeLabel', label: '来源模式', value: currentSourceDetail.value?.sourceModeLabel },
+  { key: 'sourceCacheTable', label: '来源表', value: currentSourceDetail.value?.sourceCacheTable },
+  { key: 'createdAt', label: '检测时间', value: currentSourceDetail.value?.createdAt },
+  { key: 'qualityScore', label: '质控评分', value: currentSourceDetail.value?.qualityScore },
+  { key: 'abnormalCount', label: '异常项数', value: currentSourceDetail.value?.abnormalCount ?? 0 },
+  { key: 'primaryIssue', label: '主异常项', value: currentSourceDetail.value?.primaryIssue },
+  { key: 'device', label: '设备', value: currentSourceDetail.value?.device || qualityTaskPatientInfo.value?.device },
+  { key: 'modelCode', label: '模型代码', value: currentSourceDetail.value?.modelCode },
+  { key: 'modelVersion', label: '模型版本', value: currentSourceDetail.value?.modelVersion },
+]))
 const currentHandleLogs = computed(() => (Array.isArray(currentRow.value?.handleLogs) ? currentRow.value.handleLogs : []))
 const detailImageUrl = computed(() => currentSourceDetail.value?.imageUrl || currentRow.value?.imageUrl || '')
 
@@ -694,38 +704,10 @@ const handlePageSizeChange = (size) => {
  */
 const handleExport = async () => {
   try {
-    const res = await getRecentIssues({
-      page: 1,
-      limit: Math.max(total.value || 0, pageSize.value),
+    const blob = await exportIssues({
       query: searchQuery.value,
       status: filterStatus.value
     })
-
-    const exportRows = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : [])
-    if (!exportRows.length) {
-      ElMessage.warning('暂无可导出的异常记录')
-      return
-    }
-
-    // 直接在前端拼装 CSV，保持导出和当前筛选条件一致。
-    const headers = ['异常ID', '发现时间', '患者姓名', '检查编号', '检查类型', '主异常项', '异常描述', '优先级', '责任角色', 'SLA截止', '状态']
-    const csvRows = exportRows.map(row => [
-      row.id,
-      row.date,
-      row.patientName,
-      row.examId,
-      row.type,
-      row.issueType,
-      row.description,
-      row.priority,
-      row.responsibleRoleLabel,
-      row.dueAt,
-      row.status,
-    ].map(value => `"${String(value ?? '').replaceAll('"', '""')}"`).join(','))
-
-    // 通过 Blob + a 标签触发浏览器下载，不依赖后端单独导出接口。
-    const csvContent = ['\uFEFF' + headers.join(','), ...csvRows].join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = window.URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = url
@@ -950,17 +932,18 @@ const confirmResolve = async () => {
 <style scoped>
 .summary-container {
   padding: 20px;
-  background-color: #f5f7fa;
+  background: transparent;
   min-height: 100vh;
 }
 
 /* 顶部 Header */
 .page-header {
   margin-bottom: 24px;
-  background: #fff;
+  background: linear-gradient(135deg, #ffffff 0%, #f7fbff 100%);
   padding: 16px 24px;
-  border-radius: 8px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  border-radius: 18px;
+  border: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-sm);
 }
 
 .title-section {
@@ -988,15 +971,15 @@ const confirmResolve = async () => {
 }
 
 .stats-card {
-  border: none;
-  border-radius: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
   overflow: hidden;
   transition: transform 0.3s, box-shadow 0.3s;
 }
 
 .stats-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 12px 24px rgba(0,0,0,0.1);
+  box-shadow: var(--app-shadow-md);
 }
 
 .stats-card :deep(.el-card__body) {
@@ -1062,8 +1045,9 @@ const confirmResolve = async () => {
 }
 
 .chart-card {
-  border: none;
-  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 16px;
+  box-shadow: var(--app-shadow-sm);
 }
 
 .card-header {
@@ -1093,8 +1077,9 @@ const confirmResolve = async () => {
 
 /* 列表区域 */
 .list-card {
-  border: none;
-  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 18px;
+  box-shadow: var(--app-shadow-sm);
 }
 
 .list-header {
@@ -1108,6 +1093,42 @@ const confirmResolve = async () => {
 .header-left {
   display: flex;
   align-items: center;
+}
+
+.issue-description-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.issue-description-text {
+  color: #374151;
+  line-height: 1.6;
+}
+
+.issue-description-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.issue-description-meta__item {
+  color: #6b7280;
+}
+
+.issue-description-meta__item.is-warning {
+  color: #b45309;
+}
+
+.issue-description-meta__item.is-danger {
+  color: #b42318;
+}
+
+.issue-description-meta__divider {
+  color: #d0d5dd;
 }
 
 .count-tag {
@@ -1131,6 +1152,7 @@ const confirmResolve = async () => {
 .patient-cell {
   display: flex;
   align-items: center;
+  gap: 10px;
 }
 
 .patient-avatar {

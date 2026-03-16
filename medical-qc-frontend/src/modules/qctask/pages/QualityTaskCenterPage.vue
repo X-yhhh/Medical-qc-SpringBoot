@@ -46,6 +46,11 @@
         </el-select>
         <el-button type="primary" icon="Search" @click="handleSearch">查询</el-button>
         <el-button icon="Refresh" @click="resetFilters">重置</el-button>
+        <el-button type="warning" plain :disabled="!selectedTaskIds.length" @click="handleBatchRetry">批量重跑</el-button>
+        <el-button type="success" plain :disabled="!selectedTaskIds.length" @click="handleBatchConfirm">批量确认</el-button>
+        <el-button type="danger" plain :disabled="!selectedTaskIds.length" @click="handleBatchReject">批量驳回</el-button>
+        <el-button type="info" plain :disabled="!selectedTaskIds.length" @click="handleBatchExport">导出摘要</el-button>
+        <el-button v-if="isAdminView" type="primary" plain @click="handleRepairHistoricalTasks">修复历史结果</el-button>
       </div>
     </el-card>
 
@@ -57,9 +62,22 @@
         </div>
       </template>
 
-      <el-table :data="tableData" border stripe v-loading="loading" row-key="taskId" class="task-table">
+      <el-table :data="tableData" border stripe v-loading="loading" row-key="taskId" class="task-table" @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="48" />
         <el-table-column prop="taskId" label="任务ID" min-width="220" show-overflow-tooltip />
         <el-table-column prop="taskTypeName" label="任务类型" min-width="150" />
+        <el-table-column prop="analysisLabel" label="分析类型" width="140" align="center">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.analysisLabel"
+              :type="row.mock ? 'warning' : 'primary'"
+              effect="light"
+            >
+              {{ row.analysisLabel }}
+            </el-tag>
+            <span v-else>--</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="patientName" label="患者姓名" width="120">
           <template #default="{ row }">{{ row.patientName || '--' }}</template>
         </el-table-column>
@@ -67,6 +85,9 @@
           <template #default="{ row }">{{ row.examId || '--' }}</template>
         </el-table-column>
         <el-table-column prop="sourceModeLabel" label="来源" width="110" align="center" />
+        <el-table-column prop="sourceCacheTable" label="源数据表" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.sourceCacheTable || '--' }}</template>
+        </el-table-column>
         <el-table-column prop="status" label="执行状态" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="getTaskStatusType(row.status)" effect="plain">{{ getTaskStatusLabel(row.status) }}</el-tag>
@@ -74,7 +95,7 @@
         </el-table-column>
         <el-table-column prop="qcStatus" label="质控结论" width="110" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.qcStatus" :type="row.qcStatus === '合格' ? 'success' : 'danger'" effect="light">
+            <el-tag v-if="row.qcStatus" :type="resolveQcStatusType(row.qcStatus)" effect="light">
               {{ row.qcStatus }}
             </el-tag>
             <span v-else>--</span>
@@ -89,11 +110,17 @@
         <el-table-column prop="primaryIssue" label="主异常项" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.primaryIssue || '--' }}</template>
         </el-table-column>
+        <el-table-column prop="reviewStatus" label="复核状态" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag :type="getReviewStatusType(row.reviewStatus)" effect="light">{{ getReviewStatusLabel(row.reviewStatus) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="submittedAt" label="提交时间" width="170" align="center" />
         <el-table-column prop="completedAt" label="完成时间" width="170" align="center" />
-        <el-table-column label="操作" width="120" align="center" fixed="right">
+        <el-table-column label="操作" width="180" align="center" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openTaskDetail(row.taskId)">查看详情</el-button>
+            <el-button link type="success" @click="handleDetailExport(row.taskId)">导出</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -118,7 +145,10 @@
           <div class="detail-title">
             <span class="task-name">{{ currentTask.taskTypeName }}</span>
             <el-tag :type="getTaskStatusType(currentTask.status)" effect="plain">{{ getTaskStatusLabel(currentTask.status) }}</el-tag>
-            <el-tag v-if="currentTask.qcStatus" :type="currentTask.qcStatus === '合格' ? 'success' : 'danger'" effect="light">
+            <el-tag v-if="currentTask.analysisLabel" :type="currentTask.mock ? 'warning' : 'primary'" effect="light">
+              {{ currentTask.analysisLabel }}
+            </el-tag>
+            <el-tag v-if="currentTask.qcStatus" :type="resolveQcStatusType(currentTask.qcStatus)" effect="light">
               {{ currentTask.qcStatus }}
             </el-tag>
           </div>
@@ -135,19 +165,25 @@
         />
 
         <el-row :gutter="16" class="detail-summary-row">
-          <el-col :span="8">
+          <el-col :span="6">
             <div class="summary-box">
               <div class="summary-box__label">质控评分</div>
               <div class="summary-box__value">{{ formatScore(detailSummary.qualityScore ?? currentTask.qualityScore) }}</div>
             </div>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="6">
             <div class="summary-box">
-              <div class="summary-box__label">异常项数量</div>
+              <div class="summary-box__label">非通过项</div>
               <div class="summary-box__value">{{ detailSummary.abnormalCount ?? currentTask.abnormalCount ?? 0 }}</div>
             </div>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="6">
+            <div class="summary-box">
+              <div class="summary-box__label">待复核项</div>
+              <div class="summary-box__value">{{ detailSummary.reviewCount ?? 0 }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
             <div class="summary-box">
               <div class="summary-box__label">主异常项</div>
               <div class="summary-box__value summary-box__value--small">{{ currentTask.primaryIssue || '未见明显异常' }}</div>
@@ -165,39 +201,72 @@
           <el-descriptions-item label="Accession No">{{ detailPatientInfo.accessionNumber || '--' }}</el-descriptions-item>
           <el-descriptions-item label="设备">{{ detailPatientInfo.device || '--' }}</el-descriptions-item>
           <el-descriptions-item label="原始文件">{{ currentTask.originalFilename || '--' }}</el-descriptions-item>
+          <el-descriptions-item label="复核状态">{{ getReviewStatusLabel(currentTask.reviewStatus) }}</el-descriptions-item>
+          <el-descriptions-item label="复核时间">{{ currentTask.reviewedAt || '--' }}</el-descriptions-item>
+          <el-descriptions-item label="外部引用">{{ currentTask.externalRef || '--' }}</el-descriptions-item>
         </el-descriptions>
 
-        <div v-if="detailPatientInfo && Object.keys(detailPatientInfo).length" class="section-block">
-          <h4 class="section-title">患者与采集信息</h4>
-          <el-descriptions :column="3" border class="info-descriptions">
-            <el-descriptions-item label="姓名">{{ detailPatientInfo.name || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="性别">{{ detailPatientInfo.gender || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="年龄">{{ detailPatientInfo.age ?? '--' }}</el-descriptions-item>
-            <el-descriptions-item label="检查ID">{{ detailPatientInfo.studyId || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="检查日期">{{ detailPatientInfo.studyDate || '--' }}</el-descriptions-item>
-            <el-descriptions-item label="来源">{{ detailPatientInfo.sourceLabel || '--' }}</el-descriptions-item>
-          </el-descriptions>
-        </div>
-
-        <div v-if="detailQcItems.length" class="section-block">
-          <h4 class="section-title">质控项详情</h4>
-          <div class="qc-item-list">
-            <div
-              v-for="(item, index) in detailQcItems"
-              :key="`${item.name}-${index}`"
-              :class="['qc-item', item.status === '不合格' ? 'is-error' : 'is-success']"
-            >
-              <div class="qc-item__header">
-                <span class="qc-item__name">{{ item.name }}</span>
-                <el-tag :type="item.status === '合格' ? 'success' : 'danger'" effect="light">{{ item.status }}</el-tag>
-              </div>
-              <div class="qc-item__desc">{{ item.description || '--' }}</div>
-              <div v-if="item.detail" class="qc-item__detail">{{ item.detail }}</div>
+        <el-card shadow="never" class="review-card">
+          <template #header>
+            <div class="card-header">
+              <span class="header-title">人工复核</span>
+              <el-button type="success" plain size="small" @click="handleDetailExport(currentTask.taskId)">导出当前报告</el-button>
             </div>
-          </div>
-        </div>
+          </template>
+          <el-form :model="reviewForm" label-width="90px">
+            <el-row :gutter="12">
+              <el-col :span="8">
+                <el-form-item label="复核状态">
+                  <el-select v-model="reviewForm.reviewStatus" style="width: 100%">
+                    <el-option label="待复核" value="PENDING" />
+                    <el-option label="已确认" value="CONFIRMED" />
+                    <el-option label="已驳回" value="REJECTED" />
+                  </el-select>
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="外部引用">
+                  <el-input v-model="reviewForm.externalRef" placeholder="例如 RIS-REF-001" />
+                </el-form-item>
+              </el-col>
+              <el-col :span="8">
+                <el-form-item label="结果锁定">
+                  <el-switch v-model="reviewForm.lockResult" />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-form-item label="复核意见">
+              <el-input v-model="reviewForm.reviewComment" type="textarea" :rows="3" placeholder="请输入人工复核意见" />
+            </el-form-item>
+            <el-button type="primary" @click="submitReview">保存复核结果</el-button>
+          </el-form>
+        </el-card>
 
-        <el-empty v-else-if="!currentTask.errorMessage" description="当前任务暂无明细结果" :image-size="88" />
+        <QualityTaskResultDetail
+          :source-fields="detailSourceFields"
+          :patient-info="detailPatientInfo"
+          :summary="detailSummaryView"
+          :overall-status="currentTask.qcStatus"
+          :primary-issue="currentTask.primaryIssue"
+          :qc-items="detailQcItems"
+        />
+
+        <el-card shadow="never" class="audit-card">
+          <template #header>
+            <div class="card-header">
+              <span class="header-title">审计记录</span>
+              <span class="header-extra">{{ detailAuditLogs.length }} 条</span>
+            </div>
+          </template>
+          <el-table :data="detailAuditLogs" border size="small">
+            <el-table-column prop="createdAt" label="时间" width="170" />
+            <el-table-column prop="actionType" label="动作" width="120" />
+            <el-table-column prop="operatorName" label="操作人" width="120" />
+            <el-table-column prop="comment" label="备注" min-width="220" />
+          </el-table>
+        </el-card>
+
+        <el-empty v-if="!detailQcItems.length && !currentTask.errorMessage" description="当前任务暂无明细结果" :image-size="88" />
       </div>
     </el-dialog>
   </div>
@@ -212,8 +281,18 @@
 
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { getQualityTask, getQualityTaskPage } from '@/modules/qctask/api/qualityApi'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import QualityTaskResultDetail from '@/components/QualityTaskResultDetail.vue'
+import {
+  batchRetryQualityTasks,
+  batchUpdateQualityTaskReview,
+  exportQualityTaskReport,
+  exportQualityTasksCsv,
+  getQualityTask,
+  getQualityTaskPage,
+  repairQualityTasks,
+  updateQualityTaskReview,
+} from '@/modules/qctask/api/qualityApi'
 import { getStoredUserInfo } from '@/utils/auth'
 
 const route = useRoute()
@@ -246,6 +325,13 @@ const detailLoading = ref(false)
 const dialogVisible = ref(false)
 const tableData = ref([])
 const currentTask = ref(null)
+const selectedTaskIds = ref([])
+const reviewForm = ref({
+  reviewStatus: 'PENDING',
+  reviewComment: '',
+  lockResult: false,
+  externalRef: '',
+})
 
 // 顶部筛选条件直接透传给分页接口。
 const filters = ref({
@@ -278,7 +364,20 @@ const isAdminView = computed(() => getStoredUserInfo()?.role === 'admin')
 const detailResult = computed(() => currentTask.value?.result || {})
 const detailPatientInfo = computed(() => detailResult.value?.patientInfo || {})
 const detailSummary = computed(() => detailResult.value?.summary || {})
+const detailSummaryView = computed(() => ({
+  ...detailSummary.value,
+  result: currentTask.value?.qcStatus || detailSummary.value?.result,
+  primaryIssue: currentTask.value?.primaryIssue || detailSummary.value?.primaryIssue,
+}))
 const detailQcItems = computed(() => (Array.isArray(detailResult.value?.qcItems) ? detailResult.value.qcItems : []))
+const detailAuditLogs = computed(() => (Array.isArray(currentTask.value?.auditLogs) ? currentTask.value.auditLogs : []))
+const detailSourceFields = computed(() => ([
+  { key: 'sourceCacheTable', label: '源数据表', value: currentTask.value?.sourceCacheTable },
+  { key: 'sourceMode', label: '来源模式编码', value: currentTask.value?.sourceMode },
+  { key: 'analysisMode', label: '分析模式', value: detailResult.value?.analysisLabel || detailResult.value?.analysisMode },
+  { key: 'originalFilename', label: '文件名', value: currentTask.value?.originalFilename || detailPatientInfo.value?.originalFilename },
+  { key: 'storedFilePath', label: '源路径', value: currentTask.value?.storedFilePath, span: 2, pathLike: true },
+]))
 
 // 顶部统计卡片根据 summary 聚合值直接派生展示结构。
 const summaryCards = computed(() => [
@@ -350,6 +449,12 @@ const openTaskDetail = async (taskId) => {
   detailLoading.value = true
   try {
     currentTask.value = await getQualityTask(taskId)
+    reviewForm.value = {
+      reviewStatus: currentTask.value?.reviewStatus || 'PENDING',
+      reviewComment: currentTask.value?.reviewComment || '',
+      lockResult: Boolean(currentTask.value?.lockedAt),
+      externalRef: currentTask.value?.externalRef || '',
+    }
   } catch (error) {
     console.error('加载任务详情失败', error)
     ElMessage.error(error.message || '加载任务详情失败')
@@ -389,6 +494,11 @@ const handlePageSizeChange = (size) => {
   loadTasks()
 }
 
+// 同步表格选中任务列表。
+const handleSelectionChange = (rows) => {
+  selectedTaskIds.value = Array.isArray(rows) ? rows.map((row) => row.taskId).filter(Boolean) : []
+}
+
 // 将任务执行状态映射到 Element Plus Tag 类型。
 const getTaskStatusType = (status) => {
   const mapping = {
@@ -398,6 +508,36 @@ const getTaskStatusType = (status) => {
     FAILED: 'danger',
   }
   return mapping[status] || 'info'
+}
+
+const resolveQcStatusType = (status) => {
+  if (status === '合格') {
+    return 'success'
+  }
+  if (status === '待人工确认') {
+    return 'warning'
+  }
+  return 'danger'
+}
+
+const getReviewStatusType = (status) => {
+  if (status === 'CONFIRMED') {
+    return 'success'
+  }
+  if (status === 'REJECTED') {
+    return 'danger'
+  }
+  return 'warning'
+}
+
+const getReviewStatusLabel = (status) => {
+  if (status === 'CONFIRMED') {
+    return '已确认'
+  }
+  if (status === 'REJECTED') {
+    return '已驳回'
+  }
+  return '待复核'
 }
 
 // 将任务状态码转换为中文展示文案。
@@ -419,6 +559,119 @@ function formatScore(score) {
   }
   // 整数分不补小数，非整数保留 1 位，保持列表展示紧凑。
   return numericScore % 1 === 0 ? String(numericScore) : numericScore.toFixed(1)
+}
+
+const downloadBlob = (blob, filename) => {
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.URL.revokeObjectURL(url)
+}
+
+const handleDetailExport = async (taskId) => {
+  try {
+    const blob = await exportQualityTaskReport(taskId)
+    downloadBlob(blob, `quality-task-${taskId}.docx`)
+    ElMessage.success('报告导出成功')
+  } catch (error) {
+    ElMessage.error(error.message || '报告导出失败')
+  }
+}
+
+const handleBatchExport = async () => {
+  try {
+    const blob = await exportQualityTasksCsv(selectedTaskIds.value)
+    downloadBlob(blob, 'quality-task-summary.csv')
+    ElMessage.success('任务摘要导出成功')
+  } catch (error) {
+    ElMessage.error(error.message || '任务摘要导出失败')
+  }
+}
+
+const handleBatchRetry = async () => {
+  try {
+    await batchRetryQualityTasks({ taskIds: selectedTaskIds.value })
+    ElMessage.success('批量重跑任务已提交')
+    loadTasks()
+  } catch (error) {
+    ElMessage.error(error.message || '批量重跑失败')
+  }
+}
+
+const handleBatchConfirm = async () => {
+  try {
+    await batchUpdateQualityTaskReview({
+      taskIds: selectedTaskIds.value,
+      reviewStatus: 'CONFIRMED',
+      reviewComment: '批量确认 AI 质控结果',
+      lockResult: true,
+    })
+    ElMessage.success('批量确认成功')
+    loadTasks()
+  } catch (error) {
+    ElMessage.error(error.message || '批量确认失败')
+  }
+}
+
+const handleBatchReject = async () => {
+  try {
+    await batchUpdateQualityTaskReview({
+      taskIds: selectedTaskIds.value,
+      reviewStatus: 'REJECTED',
+      reviewComment: '批量驳回，需人工复核',
+      lockResult: false,
+    })
+    ElMessage.success('批量驳回成功')
+    loadTasks()
+  } catch (error) {
+    ElMessage.error(error.message || '批量驳回失败')
+  }
+}
+
+const handleRepairHistoricalTasks = async () => {
+  const selectedCount = selectedTaskIds.value.length
+  const repairAll = selectedCount === 0
+  const confirmText = repairAll
+    ? '将修复全部历史任务的质控结论、异常项统计和 mock 标记，并同步刷新异常工单。是否继续？'
+    : `将修复已选中的 ${selectedCount} 条任务，并同步刷新对应异常工单。是否继续？`
+
+  try {
+    await ElMessageBox.confirm(confirmText, '修复历史结果', {
+      type: 'warning',
+      confirmButtonText: '开始修复',
+      cancelButtonText: '取消',
+    })
+
+    const response = await repairQualityTasks({
+      taskIds: repairAll ? [] : selectedTaskIds.value,
+      refreshIssues: true,
+    })
+    const updatedTaskCount = Number(response?.updatedTaskCount || 0)
+    const updatedResultCount = Number(response?.updatedResultCount || 0)
+    const refreshedIssueCount = Number(response?.refreshedIssueCount || 0)
+    ElMessage.success(`修复完成：任务 ${updatedTaskCount} 条，结果 ${updatedResultCount} 条，工单 ${refreshedIssueCount} 条`)
+    loadTasks()
+  } catch (error) {
+    if (error === 'cancel') {
+      return
+    }
+    ElMessage.error(error.message || '修复历史任务失败')
+  }
+}
+
+const submitReview = async () => {
+  if (!currentTask.value?.taskId) {
+    return
+  }
+  try {
+    currentTask.value = await updateQualityTaskReview(currentTask.value.taskId, reviewForm.value)
+    ElMessage.success('人工复核已保存')
+    loadTasks()
+  } catch (error) {
+    ElMessage.error(error.message || '保存复核失败')
+  }
 }
 
 onMounted(async () => {
@@ -650,6 +903,11 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+.review-card,
+.audit-card {
+  margin-bottom: 20px;
+}
+
 /* 详情区块外边距。 */
 .section-block {
   margin-bottom: 22px;
@@ -662,6 +920,13 @@ onMounted(async () => {
   font-size: 15px;
   font-weight: 600;
   color: #303133;
+}
+
+.path-text {
+  display: inline-block;
+  max-width: 100%;
+  word-break: break-all;
+  line-height: 1.6;
 }
 
 /* 质控项详情列表。 */

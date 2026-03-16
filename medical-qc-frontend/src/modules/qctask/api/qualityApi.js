@@ -4,16 +4,58 @@ import request from '@/utils/request'
 const QUALITY_TASK_POLL_PREFIX = '/quality/tasks/'
 
 // 将通用质控任务表单序列化为 multipart/form-data。
-const buildTaskFormData = ({ file, patientName, examId, sourceMode }) => {
+const buildTaskFormData = (payload = {}) => {
   const formData = new FormData()
-  if (file) {
+  if (payload.file) {
     // 本地上传场景下才会有原始文件。
-    formData.append('file', file)
+    formData.append('file', payload.file)
   }
   // 以下字段对应后端质控任务提交接口的表单参数。
-  formData.append('patient_name', patientName || '')
-  formData.append('exam_id', examId || '')
-  formData.append('source_mode', sourceMode || 'local')
+  formData.append('patient_name', payload.patientName || '')
+  formData.append('exam_id', payload.examId || '')
+  if (payload.patientId) {
+    formData.append('patient_id', payload.patientId)
+  }
+  if (payload.gender) {
+    formData.append('gender', payload.gender)
+  }
+  if (payload.age !== null && payload.age !== undefined && payload.age !== '') {
+    formData.append('age', payload.age)
+  }
+  if (payload.studyDate) {
+    formData.append('study_date', payload.studyDate)
+  }
+  formData.append('source_mode', payload.sourceMode || 'local')
+  if (payload.heartRate !== null && payload.heartRate !== undefined && payload.heartRate !== '') {
+    formData.append('heart_rate', payload.heartRate)
+  }
+  if (payload.hrVariability !== null && payload.hrVariability !== undefined && payload.hrVariability !== '') {
+    formData.append('hr_variability', payload.hrVariability)
+  }
+  if (payload.reconPhase) {
+    formData.append('recon_phase', payload.reconPhase)
+  }
+  if (payload.kVp) {
+    formData.append('kvp', payload.kVp)
+  }
+  if (payload.flowRate !== null && payload.flowRate !== undefined && payload.flowRate !== '') {
+    formData.append('flow_rate', payload.flowRate)
+  }
+  if (payload.contrastVolume !== null && payload.contrastVolume !== undefined && payload.contrastVolume !== '') {
+    formData.append('contrast_volume', payload.contrastVolume)
+  }
+  if (payload.injectionSite) {
+    formData.append('injection_site', payload.injectionSite)
+  }
+  if (payload.sliceThickness !== null && payload.sliceThickness !== undefined && payload.sliceThickness !== '') {
+    formData.append('slice_thickness', payload.sliceThickness)
+  }
+  if (payload.bolusTrackingHu !== null && payload.bolusTrackingHu !== undefined && payload.bolusTrackingHu !== '') {
+    formData.append('bolus_tracking_hu', payload.bolusTrackingHu)
+  }
+  if (payload.scanDelaySec !== null && payload.scanDelaySec !== undefined && payload.scanDelaySec !== '') {
+    formData.append('scan_delay_sec', payload.scanDelaySec)
+  }
   return formData
 }
 
@@ -79,6 +121,69 @@ export const getQualityTaskPage = async (params = {}) => {
   }
 }
 
+// 更新单条任务的人工复核状态。
+export const updateQualityTaskReview = async (taskId, payload = {}) => {
+  try {
+    return await request.patch(`/quality/tasks/${taskId}/review`, payload)
+  } catch (error) {
+    throw parseRequestError(error, '更新任务复核状态失败')
+  }
+}
+
+// 批量更新任务的人工复核状态。
+export const batchUpdateQualityTaskReview = async (payload = {}) => {
+  try {
+    return await request.patch('/quality/tasks/batch/review', payload)
+  } catch (error) {
+    throw parseRequestError(error, '批量更新任务复核状态失败')
+  }
+}
+
+// 批量重跑历史任务。
+export const batchRetryQualityTasks = async (payload = {}) => {
+  try {
+    return await request.post('/quality/tasks/batch/retry', payload)
+  } catch (error) {
+    throw parseRequestError(error, '批量重跑任务失败')
+  }
+}
+
+// 修复历史任务中的质控结论、异常项和 mock 标记。
+export const repairQualityTasks = async (payload = {}) => {
+  try {
+    return await request.post('/quality/tasks/repair', payload)
+  } catch (error) {
+    throw parseRequestError(error, '修复历史任务失败')
+  }
+}
+
+// 导出单条任务的 DOCX 报告。
+export const exportQualityTaskReport = async (taskId) => {
+  try {
+    return await request.get(`/quality/tasks/${taskId}/report`, { responseType: 'blob' })
+  } catch (error) {
+    throw parseRequestError(error, '导出任务报告失败')
+  }
+}
+
+// 导出多条任务的 CSV 摘要。
+export const exportQualityTasksCsv = async (taskIds = []) => {
+  try {
+    return await request.post('/quality/tasks/export', { taskIds }, { responseType: 'blob' })
+  } catch (error) {
+    throw parseRequestError(error, '导出任务摘要失败')
+  }
+}
+
+// 获取任务中心概览指标。
+export const getQualityTaskMetrics = async () => {
+  try {
+    return await request.get('/quality/tasks/metrics')
+  } catch (error) {
+    throw parseRequestError(error, '获取任务指标失败')
+  }
+}
+
 // 提交头部出血检测任务，兼容本地上传与 PACS 来源两种模式。
 export const predictHemorrhage = async (file, metadata = {}) => {
   const formData = new FormData()
@@ -124,6 +229,15 @@ export const getHemorrhageRecord = async (recordId) => {
   } catch (error) {
     console.error('获取指定出血检测历史记录失败', error)
     throw error
+  }
+}
+
+// 导出单条脑出血检测历史记录的 DOCX 报告。
+export const exportHemorrhageReport = async (recordId) => {
+  try {
+    return await request.get(`/quality/hemorrhage/history/${recordId}/report`, { responseType: 'blob' })
+  } catch (error) {
+    throw parseRequestError(error, '导出脑出血检测报告失败')
   }
 }
 

@@ -1,6 +1,6 @@
 import { reactive, ref, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getQualityTask } from '@/modules/qctask/api/qualityApi'
+import { exportQualityTaskReport, getQualityTask } from '@/modules/qctask/api/qualityApi'
 
 // 轮询频率与超时统一在组合函数层收敛，供各质控页面复用。
 const POLL_INTERVAL_MS = 1000
@@ -37,13 +37,14 @@ export const useAsyncQualityTaskPage = (options) => {
   const {
     submitTask,
     initialPatientInfo,
-    pacsPreset,
+    initialUploadForm = {
+      patientName: '',
+      examId: ''
+    },
     analysisSteps,
     exportMessage,
     reanalyzeStartMessage,
     reanalyzeSuccessMessage,
-    pacsLoadingMessage,
-    pacsReadyMessage,
     pendingStatusMessage = '质控任务已提交，等待云端处理...',
     processingStatusMessage = '云端任务处理中，正在等待最终报告...'
   } = options
@@ -62,20 +63,22 @@ export const useAsyncQualityTaskPage = (options) => {
   const uploadDialogVisible = ref(false)
   const uploadMode = ref('local')
   const uploadFormRef = ref(null)
-  const uploadForm = reactive({
-    patientName: '',
-    examId: ''
-  })
+  const uploadForm = reactive(cloneInitialState(initialUploadForm))
   const selectedFile = ref(null)
   const uploadMethodDialogVisible = ref(false)
 
   // 页面主结果区状态。
   const qcItems = ref([])
   const patientInfo = ref(cloneInitialState(initialPatientInfo))
+  const latestTaskId = ref('')
+  const taskStatus = ref('')
+  const taskError = ref('')
+  const analysisMode = ref('')
+  const analysisLabel = ref('')
+  const isMockResult = ref(false)
 
   // 以下内部变量不参与渲染，用于控制定时器、组件销毁和并发运行保护。
   let progressTimer = null
-  let pacsMessageTimer = null
   let destroyed = false
   let activeRunToken = 0
   let lastPolledStatus = ''
@@ -88,19 +91,29 @@ export const useAsyncQualityTaskPage = (options) => {
     }
   }
 
-  /**
-   * 清理 PACS 演示提示定时器，避免组件卸载后继续弹提示。
-   */
-  const clearPacsMessageTimer = () => {
-    if (pacsMessageTimer) {
-      clearTimeout(pacsMessageTimer)
-      pacsMessageTimer = null
-    }
-  }
-
   const resetResultState = () => {
     qcItems.value = []
     patientInfo.value = cloneInitialState(initialPatientInfo)
+    latestTaskId.value = ''
+    taskStatus.value = ''
+    taskError.value = ''
+    analysisMode.value = ''
+    analysisLabel.value = ''
+    isMockResult.value = false
+  }
+
+  // 统一重置上传表单，确保任务专属扩展字段也能被正确清空。
+  const resetUploadFormValues = (overrides = {}) => {
+    const nextValues = {
+      ...cloneInitialState(initialUploadForm),
+      ...overrides
+    }
+    Object.keys(uploadForm).forEach((key) => {
+      delete uploadForm[key]
+    })
+    Object.entries(nextValues).forEach(([key, value]) => {
+      uploadForm[key] = value
+    })
   }
 
   // 向页面日志区域插入最新一条消息，并限制展示条数。
@@ -117,9 +130,13 @@ export const useAsyncQualityTaskPage = (options) => {
     patientInfo.value = {
       ...cloneInitialState(initialPatientInfo),
       ...patientInfo.value,
+      patientId: uploadForm.patientId || patientInfo.value.patientId,
       name: uploadForm.patientName || patientInfo.value.name,
+      gender: uploadForm.gender || patientInfo.value.gender,
+      age: uploadForm.age ?? patientInfo.value.age,
       studyId: uploadForm.examId || patientInfo.value.studyId,
-      studyDate: patientInfo.value.studyDate || nowText()
+      accessionNumber: uploadForm.examId || patientInfo.value.accessionNumber,
+      studyDate: uploadForm.studyDate || patientInfo.value.studyDate || nowText()
     }
   }
 
@@ -180,6 +197,11 @@ export const useAsyncQualityTaskPage = (options) => {
       studyId: nextPatientInfo.studyId || uploadForm.examId
     }
     qcItems.value = nextQcItems
+    taskStatus.value = 'SUCCESS'
+    taskError.value = ''
+    analysisMode.value = result.analysisMode || ''
+    analysisLabel.value = result.analysisLabel || ''
+    isMockResult.value = Boolean(result.mock)
     analyzeProgress.value = 100
     currentAnalysisStep.value = '完成'
     addLog('分析完成，已获取最终质控报告。')
@@ -207,6 +229,7 @@ export const useAsyncQualityTaskPage = (options) => {
       }
 
       const currentStatus = taskDetail?.status || ''
+      taskStatus.value = currentStatus
       if (currentStatus !== lastPolledStatus) {
         // 状态变化时才追加日志，避免轮询日志刷屏。
         if (currentStatus === 'PENDING') {
@@ -225,6 +248,9 @@ export const useAsyncQualityTaskPage = (options) => {
       }
 
       if (currentStatus === 'FAILED') {
+        taskError.value = taskDetail?.errorMessage || '任务处理失败'
+        currentAnalysisStep.value = '失败'
+        addLog(taskError.value)
         throw new Error(taskDetail?.errorMessage || '任务处理失败')
       }
 
@@ -254,6 +280,8 @@ export const useAsyncQualityTaskPage = (options) => {
     analyzing.value = true
     analyzeProgress.value = 0
     currentAnalysisStep.value = '任务提交'
+    taskError.value = ''
+    taskStatus.value = ''
     patchPatientInfoPreview()
     startVisualProgress(runToken)
 
@@ -261,6 +289,7 @@ export const useAsyncQualityTaskPage = (options) => {
       // 各页面通过 options.submitTask 注入具体提交逻辑，这里只负责公共流程。
       const submitResult = await submitTask({
         file: uploadMode.value === 'local' ? rawFile : null,
+        ...uploadForm,
         patientName: uploadForm.patientName,
         examId: uploadForm.examId,
         sourceMode: uploadMode.value
@@ -270,6 +299,7 @@ export const useAsyncQualityTaskPage = (options) => {
       if (!taskId) {
         throw new Error('提交任务成功，但未获取到任务 ID')
       }
+      latestTaskId.value = taskId
 
       // 任务提交成功后进入轮询阶段。
       addLog(submitResult.message || pendingStatusMessage)
@@ -281,9 +311,11 @@ export const useAsyncQualityTaskPage = (options) => {
         ElMessage.success(reanalyzeSuccessMessage)
       }
     } catch (error) {
+      taskStatus.value = 'FAILED'
+      taskError.value = error.message || '分析失败'
       currentAnalysisStep.value = '失败'
-      addLog(error.message || '分析失败')
-      ElMessage.error(error.message || '分析失败')
+      addLog(taskError.value)
+      ElMessage.error(taskError.value)
     } finally {
       // 只有当前活跃任务才能收尾并关闭加载态。
       if (runToken === activeRunToken) {
@@ -295,10 +327,8 @@ export const useAsyncQualityTaskPage = (options) => {
 
   // 打开上传弹窗时重置本次任务的基础输入。
   const openUploadDialog = (mode = 'local') => {
-    clearPacsMessageTimer()
     uploadMode.value = mode
-    uploadForm.patientName = ''
-    uploadForm.examId = ''
+    resetUploadFormValues()
     selectedFile.value = null
     uploadDialogVisible.value = true
   }
@@ -339,27 +369,6 @@ export const useAsyncQualityTaskPage = (options) => {
     await runTask({ showSuccessToast: true })
   }
 
-  /**
-   * 模拟 PACS 选片入口。
-   *
-   * 当前仍使用预置患者信息辅助演示选片，但任务会统一提交到后端持久化执行。
-   */
-  const simulatePacsSelect = () => {
-    clearPacsMessageTimer()
-    uploadMode.value = 'pacs'
-    uploadForm.patientName = pacsPreset?.patientName || ''
-    uploadForm.examId = pacsPreset?.examId || ''
-    selectedFile.value = null
-    uploadDialogVisible.value = true
-    ElMessage.info(pacsLoadingMessage)
-
-    pacsMessageTimer = setTimeout(() => {
-      if (!destroyed) {
-        ElMessage.success(pacsReadyMessage)
-      }
-    }, 500)
-  }
-
   // 真实 PACS 检索对话框显示状态。
   const pacsSearchDialogVisible = ref(false)
 
@@ -369,8 +378,24 @@ export const useAsyncQualityTaskPage = (options) => {
 
   // 从 PACS 查询结果中选中检查后，把关键字段回填到上传表单。
   const handlePacsSelect = (selectedStudy) => {
-    uploadForm.patientName = selectedStudy.patientName
-    uploadForm.examId = selectedStudy.accessionNumber
+    resetUploadFormValues({
+      patientId: selectedStudy.patientId || '',
+      patientName: selectedStudy.patientName,
+      examId: selectedStudy.accessionNumber,
+      gender: selectedStudy.gender || '',
+      age: selectedStudy.age ?? null,
+      studyDate: selectedStudy.studyDate || '',
+      flowRate: selectedStudy.flowRate ?? '',
+      contrastVolume: selectedStudy.contrastVolume ?? '',
+      injectionSite: selectedStudy.injectionSite ?? '',
+      sliceThickness: selectedStudy.sliceThickness ?? '',
+      bolusTrackingHu: selectedStudy.bolusTrackingHu ?? '',
+      scanDelaySec: selectedStudy.scanDelaySec ?? '',
+      heartRate: selectedStudy.heartRate ?? '',
+      hrVariability: selectedStudy.hrVariability ?? '',
+      reconPhase: selectedStudy.reconPhase ?? '',
+      kVp: selectedStudy.kVp ?? ''
+    })
     selectedFile.value = null
     uploadMode.value = 'pacs'
     uploadDialogVisible.value = true
@@ -406,8 +431,28 @@ export const useAsyncQualityTaskPage = (options) => {
   }
 
   // 当前导出逻辑由各页面通过文案控制，组合函数只统一成功提示。
-  const handleExport = () => {
-    ElMessage.success(exportMessage)
+  const handleExport = async () => {
+    if (!latestTaskId.value) {
+      ElMessage.warning('当前案例尚未生成可导出的任务报告')
+      return
+    }
+    if (taskStatus.value !== 'SUCCESS') {
+      ElMessage.warning('当前任务尚未成功完成，暂无可导出的任务报告')
+      return
+    }
+
+    try {
+      const blob = await exportQualityTaskReport(latestTaskId.value)
+      const url = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `quality-task-${latestTaskId.value}.docx`
+      link.click()
+      window.URL.revokeObjectURL(url)
+      ElMessage.success(exportMessage)
+    } catch (error) {
+      ElMessage.error(error.message || '导出报告失败')
+    }
   }
 
   onBeforeUnmount(() => {
@@ -415,7 +460,6 @@ export const useAsyncQualityTaskPage = (options) => {
     destroyed = true
     activeRunToken += 1
     clearProgressTimer()
-    clearPacsMessageTimer()
   })
 
   return {
@@ -432,12 +476,17 @@ export const useAsyncQualityTaskPage = (options) => {
     selectedFile,
     qcItems,
     patientInfo,
+    latestTaskId,
+    taskStatus,
+    taskError,
+    analysisMode,
+    analysisLabel,
+    isMockResult,
     uploadMethodDialogVisible,
     openUploadDialog,
     handleDialogFileChange,
     handleDialogFileRemove,
     submitUpload,
-    simulatePacsSelect,
     pacsSearchDialogVisible,
     openPacsSearch,
     handlePacsSelect,

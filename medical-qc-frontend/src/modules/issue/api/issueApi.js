@@ -67,3 +67,13 @@ export const updateIssueWorkflow = (issueId, data) => {
     data,
   })
 }
+
+// 按当前筛选条件导出异常工单 CSV。
+export const exportIssues = (params = {}) => {
+  return request({
+    url: '/summary/export',
+    method: 'get',
+    params,
+    responseType: 'blob',
+  })
+}
